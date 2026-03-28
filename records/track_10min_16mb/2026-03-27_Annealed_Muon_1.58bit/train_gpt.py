@@ -50,9 +50,8 @@ class Hyperparameters:
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
-    # Core Brain Model Shape (~70M distinct parameters)
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 12)) # Number of recurrent loops
+    num_layers = int(os.environ.get("NUM_LAYERS", 12)) 
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 8))
     model_dim = int(os.environ.get("MODEL_DIM", 2048))
     num_heads = int(os.environ.get("NUM_HEADS", 16))
@@ -94,7 +93,6 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
         B = b * A + c * A @ A
         X = a * X + B @ X
     return X.T if transposed else X
-
 
 class Muon(torch.optim.Optimizer):
     def __init__(self, params, lr: float, momentum: float, backend_steps: int, nesterov: bool = True):
@@ -204,10 +202,9 @@ def eval_val(args: Hyperparameters, model: nn.Module, rank: int, world_size: int
     val_byte_count = torch.zeros((), device=device, dtype=torch.float64)
 
     model.eval()
-    tau_eval = torch.tensor(0.01, device=device, dtype=torch.float32)
-    step_eval = torch.tensor(1.0, device=device, dtype=torch.float32)
+    tau_eval = torch.tensor([0.01], device=device, dtype=torch.float32)
+    step_eval = torch.tensor([1.0], device=device, dtype=torch.float32)
 
-    # FIX: Switched from inference_mode() to no_grad() to prevent Dynamo graph crashes
     with torch.no_grad():
         for batch_seq_start in range(seq_start, seq_end, local_batch_seqs):
             batch_seq_end = min(batch_seq_start + local_batch_seqs, seq_end)
@@ -355,6 +352,18 @@ def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
             if (param.ndim < 2 or "gamma" in name or "beta" in name) and param.dtype != torch.float32:
                 param.data = param.data.float()
 
+# --- OPTIMIZATION 1: Standalone Compiled Math to prevent dynamic loop tracing ---
+@torch.compile(fullgraph=True, dynamic=False)
+def compute_active_weight(weight_latent: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+    tau_safe = tau.clamp(min=1e-4)
+    W_active_tanh = 0.5 * (
+        torch.tanh((weight_latent + 0.5) / tau_safe) +
+        torch.tanh((weight_latent - 0.5) / tau_safe)
+    )
+    w_discrete = weight_latent.clamp(-1.0, 1.0).round()
+    W_active_snap = (w_discrete - weight_latent).detach() + weight_latent
+    return torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh)
+
 class AnnealedBitLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool = False):
         super().__init__()
@@ -369,34 +378,20 @@ class AnnealedBitLinear(nn.Module):
         self._zero_init = False
 
     def get_active_weight(self, tau: Tensor, step_fraction: Tensor) -> Tensor:
-        tau_safe = tau.clamp(min=1e-4)
-        W_active_tanh = 0.5 * (
-            torch.tanh((self.weight_latent + 0.5) / tau_safe) +
-            torch.tanh((self.weight_latent - 0.5) / tau_safe)
-        )
-        w_discrete = self.weight_latent.clamp(-1.0, 1.0).round()
-        W_active_snap = (w_discrete - self.weight_latent).detach() + self.weight_latent
-        
-        return torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh)
+        return compute_active_weight(self.weight_latent, tau, step_fraction)
 
+# --- OPTIMIZATION 2: Pre-Cached Rotary to prevent 'is None' Graph Breaks ---
 class Rotary(nn.Module):
-    def __init__(self, dim: int, base: float = 10000.0):
+    def __init__(self, dim: int, base: float = 10000.0, max_seq_len: int = 8192):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._seq_len_cached = 0
-        self._cos_cached: Tensor | None = None
-        self._sin_cached: Tensor | None = None
+        t = torch.arange(max_seq_len, dtype=torch.float32)
+        freqs = torch.outer(t, inv_freq)
+        self.register_buffer("cos_cached", freqs.cos()[None, None, :, :], persistent=False)
+        self.register_buffer("sin_cached", freqs.sin()[None, None, :, :], persistent=False)
 
-    def forward(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
-        if (self._cos_cached is None or self._sin_cached is None
-            or self._seq_len_cached != seq_len or self._cos_cached.device != device):
-            t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
-            freqs = torch.outer(t, self.inv_freq.to(device))
-            self._cos_cached = freqs.cos()[None, None, :, :]
-            self._sin_cached = freqs.sin()[None, None, :, :]
-            self._seq_len_cached = seq_len
-        return self._cos_cached.to(dtype=dtype), self._sin_cached.to(dtype=dtype)
+    def forward(self, seq_len: int, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
+        return self.cos_cached[:, :, :seq_len, :].to(dtype), self.sin_cached[:, :, :seq_len, :].to(dtype)
 
 def apply_rotary_emb(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     half = x.size(-1) // 2
@@ -428,7 +423,7 @@ class CausalSelfAttention(nn.Module):
         
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
-        cos, sin = self.rotary(seqlen, x.device, q.dtype)
+        cos, sin = self.rotary(seqlen, q.dtype)
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
@@ -508,14 +503,13 @@ class GPT(nn.Module):
 
     def forward(self, input_ids: Tensor, target_ids: Tensor | None = None, tau: Tensor | None = None, step_fraction: Tensor | None = None) -> Tensor:
         if tau is None:
-            tau = torch.tensor(0.01, device=input_ids.device, dtype=torch.float32)
+            tau = torch.tensor([0.01], device=input_ids.device, dtype=torch.float32)
         if step_fraction is None:
-            step_fraction = torch.tensor(1.0, device=input_ids.device, dtype=torch.float32)
+            step_fraction = torch.tensor([1.0], device=input_ids.device, dtype=torch.float32)
 
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         
-        # --- OPTIMIZATION: HOIST CORE BRAIN WEIGHTS ONCE ---
         cb = self.core_brain
         w_q = cb.attn.c_q.get_active_weight(tau, step_fraction)
         w_k = cb.attn.c_k.get_active_weight(tau, step_fraction)
@@ -523,11 +517,11 @@ class GPT(nn.Module):
         w_attn_proj = cb.attn.proj.get_active_weight(tau, step_fraction)
         w_mlp_fc = cb.mlp.fc.get_active_weight(tau, step_fraction)
         w_mlp_proj = cb.mlp.proj.get_active_weight(tau, step_fraction)
-        # ---------------------------------------------------
 
+        # Loop evaluates strictly in eager Python.
         for l in range(self.num_loops):
             normalized_x = self.sub_ln(x)
-            # Pass the hoisted weights into the block
+            # The core_brain itself will be a compiled object.
             core_out = cb(normalized_x, w_q, w_k, w_v, w_attn_proj, w_mlp_fc, w_mlp_proj)
             x = x + core_out * self.gamma[l].to(x.dtype) + self.beta[l].to(x.dtype)
 
@@ -546,7 +540,6 @@ class GPT(nn.Module):
             targets = target_ids.reshape(-1)
             return F.cross_entropy(logits.float(), targets, reduction="mean")
         return logits
-
 
 # -----------------------------
 # TRAINING
@@ -645,9 +638,14 @@ def main() -> None:
         if isinstance(module, CastedLinear):
             module.float()
     restore_low_dim_params_to_fp32(base_model)
-    base_model.core_brain = torch.compile(base_model.core_brain)
-    compiled_model = base_model
-    model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
+    
+    # --- OPTIMIZATION 3: Targeted Compilation to prevent Loop Unrolling Explosion ---
+    # We strictly target torch.compile at the single CoreBrain block.
+    # The 12-loop executes in Python, preventing Dynamo from generating an 840M param graph.
+    base_model.core_brain = torch.compile(base_model.core_brain, fullgraph=True, dynamic=False)
+    
+    # DDP perfectly wraps the eager model, handling the compiled sub-module natively.
+    model: nn.Module = DDP(base_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else base_model
 
     matrix_params = []
     scalar_params = []
@@ -719,7 +717,7 @@ def main() -> None:
                     model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
                 x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                    warmup_loss = model(x, y, tau=torch.tensor(1.0, device=device), step_fraction=torch.tensor(0.0, device=device))
+                    warmup_loss = model(x, y, tau=torch.tensor([1.0], device=device), step_fraction=torch.tensor([0.0], device=device))
                 (warmup_loss * grad_scale).backward()
             for opt in optimizers:
                 opt.step()
@@ -893,7 +891,6 @@ def main() -> None:
 
     if distributed:
         dist.destroy_process_group()
-
 
 if __name__ == "__main__":
     main()
