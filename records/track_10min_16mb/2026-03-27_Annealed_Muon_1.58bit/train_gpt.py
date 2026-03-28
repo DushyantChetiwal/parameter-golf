@@ -204,11 +204,11 @@ def eval_val(args: Hyperparameters, model: nn.Module, rank: int, world_size: int
     val_byte_count = torch.zeros((), device=device, dtype=torch.float64)
 
     model.eval()
-    # Default to discrete frozen math for evaluation.
     tau_eval = torch.tensor(0.01, device=device, dtype=torch.float32)
     step_eval = torch.tensor(1.0, device=device, dtype=torch.float32)
 
-    with torch.inference_mode():
+    # FIX: Switched from inference_mode() to no_grad() to prevent Dynamo graph crashes
+    with torch.no_grad():
         for batch_seq_start in range(seq_start, seq_end, local_batch_seqs):
             batch_seq_end = min(batch_seq_start + local_batch_seqs, seq_end)
             raw_start = batch_seq_start * args.train_seq_len
@@ -368,7 +368,7 @@ class AnnealedBitLinear(nn.Module):
             self.register_parameter('bias', None)
         self._zero_init = False
 
-    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+    def get_active_weight(self, tau: Tensor, step_fraction: Tensor) -> Tensor:
         tau_safe = tau.clamp(min=1e-4)
         W_active_tanh = 0.5 * (
             torch.tanh((self.weight_latent + 0.5) / tau_safe) +
@@ -377,9 +377,7 @@ class AnnealedBitLinear(nn.Module):
         w_discrete = self.weight_latent.clamp(-1.0, 1.0).round()
         W_active_snap = (w_discrete - self.weight_latent).detach() + self.weight_latent
         
-        W_active = torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh)
-        bias = self.bias.to(x.dtype) if self.bias is not None else None
-        return F.linear(x, W_active.to(x.dtype), bias)
+        return torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh)
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, base: float = 10000.0):
@@ -422,11 +420,11 @@ class CausalSelfAttention(nn.Module):
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
-    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+    def forward(self, x: Tensor, w_q: Tensor, w_k: Tensor, w_v: Tensor, w_proj: Tensor) -> Tensor:
         bsz, seqlen, dim = x.shape
-        q = self.c_q(x, tau, step_fraction).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.c_k(x, tau, step_fraction).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.c_v(x, tau, step_fraction).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = F.linear(x, w_q.to(x.dtype), self.c_q.bias).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+        k = F.linear(x, w_k.to(x.dtype), self.c_k.bias).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = F.linear(x, w_v.to(x.dtype), self.c_v.bias).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
@@ -439,7 +437,7 @@ class CausalSelfAttention(nn.Module):
             q, k, v, attn_mask=None, is_causal=True, enable_gqa=(self.num_kv_heads != self.num_heads)
         )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
-        return self.proj(y, tau, step_fraction)
+        return F.linear(y, w_proj.to(x.dtype), self.proj.bias)
 
 class MLP(nn.Module):
     def __init__(self, dim: int, mlp_mult: int):
@@ -449,9 +447,9 @@ class MLP(nn.Module):
         self.proj = AnnealedBitLinear(hidden, dim, bias=False)
         self.proj._zero_init = True
 
-    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
-        x = torch.relu(self.fc(x, tau, step_fraction))
-        return self.proj(x.square(), tau, step_fraction)
+    def forward(self, x: Tensor, w_fc: Tensor, w_proj: Tensor) -> Tensor:
+        x = torch.relu(F.linear(x, w_fc.to(x.dtype), self.fc.bias))
+        return F.linear(x.square(), w_proj.to(x.dtype), self.proj.bias)
 
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, num_kv_heads: int, mlp_mult: int, rope_base: float, qk_gain_init: float):
@@ -463,11 +461,11 @@ class Block(nn.Module):
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
 
-    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
-        attn_out = self.attn(self.attn_norm(x), tau, step_fraction)
+    def forward(self, x: Tensor, w_q: Tensor, w_k: Tensor, w_v: Tensor, w_attn_proj: Tensor, w_mlp_fc: Tensor, w_mlp_proj: Tensor) -> Tensor:
+        attn_out = self.attn(self.attn_norm(x), w_q, w_k, w_v, w_attn_proj)
         delta_attn = self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
         x_mid = x + delta_attn
-        delta_mlp = self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x_mid), tau, step_fraction)
+        delta_mlp = self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x_mid), w_mlp_fc, w_mlp_proj)
         return delta_attn + delta_mlp
 
 class GPT(nn.Module):
@@ -517,9 +515,20 @@ class GPT(nn.Module):
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         
+        # --- OPTIMIZATION: HOIST CORE BRAIN WEIGHTS ONCE ---
+        cb = self.core_brain
+        w_q = cb.attn.c_q.get_active_weight(tau, step_fraction)
+        w_k = cb.attn.c_k.get_active_weight(tau, step_fraction)
+        w_v = cb.attn.c_v.get_active_weight(tau, step_fraction)
+        w_attn_proj = cb.attn.proj.get_active_weight(tau, step_fraction)
+        w_mlp_fc = cb.mlp.fc.get_active_weight(tau, step_fraction)
+        w_mlp_proj = cb.mlp.proj.get_active_weight(tau, step_fraction)
+        # ---------------------------------------------------
+
         for l in range(self.num_loops):
             normalized_x = self.sub_ln(x)
-            core_out = self.core_brain(normalized_x, tau, step_fraction)
+            # Pass the hoisted weights into the block
+            core_out = cb(normalized_x, w_q, w_k, w_v, w_attn_proj, w_mlp_fc, w_mlp_proj)
             x = x + core_out * self.gamma[l].to(x.dtype) + self.beta[l].to(x.dtype)
 
         x = self.final_norm(x).reshape(-1, x.size(-1))
