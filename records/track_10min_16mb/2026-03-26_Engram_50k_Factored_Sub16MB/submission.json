@@ -1,0 +1,10 @@
+{
+  "name": "Engram-style 50K bigram factored (NGRAM_FACTOR_RANK) + int5 n-gram table + int6 proj",
+  "val_loss": null,
+  "val_bpb": null,
+  "bytes_total": null,
+  "blurb": "Hashed N-gram memory (Cheng et al. arXiv:2601.07372 motivated). Low-rank VxR * RxD table when V*D>=2M unless NGRAM_FACTOR_RANK=0. int5 on n-gram table rows, int6 on proj/embed_up, int5 MLP / int6 attn, zstd-22. Same backbone recipe as SOTA family (SmearGate, U-Net skips, GQA, SWA). Replace nulls with measured val_loss/val_bpb/bytes after 8xH100 verification.",
+  "author": "",
+  "github_id": "",
+  "date": "2026-03-26"
+}

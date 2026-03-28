@@ -88,7 +88,6 @@ class Hyperparameters:
 
     bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 10240))
     bigram_dim = int(os.environ.get("BIGRAM_DIM", 128))
-    ngram_order = int(os.environ.get("NGRAM_ORDER", 2))
 
     swa_enabled = bool(int(os.environ.get("SWA_ENABLED", "1")))
     swa_start_frac = float(os.environ.get("SWA_START_FRAC", 0.4))
@@ -585,33 +584,28 @@ class SmearGate(nn.Module):
         return (1 - g) * x + g * x_prev
 
 
-class NgramHashEmbedding(nn.Module):
-    """Hash consecutive token N-grams into a learned embedding table (Engram-style)."""
-    def __init__(self, vocab_size: int, embed_dim: int, model_dim: int, order: int = 2):
+class BigramHashEmbedding(nn.Module):
+    """Hash consecutive token pairs into a learned embedding table."""
+    def __init__(self, bigram_vocab_size: int, bigram_dim: int, model_dim: int):
         super().__init__()
-        self.ngram_vocab_size = vocab_size
-        self.order = order
-        self.embed = nn.Embedding(vocab_size, embed_dim)
+        self.bigram_vocab_size = bigram_vocab_size
+        self.embed = nn.Embedding(bigram_vocab_size, bigram_dim)
         nn.init.zeros_(self.embed.weight)
-        self.proj = CastedLinear(embed_dim, model_dim, bias=False) if embed_dim != model_dim else None
+        self.proj = CastedLinear(bigram_dim, model_dim, bias=False) if bigram_dim != model_dim else None
         if self.proj is not None:
             nn.init.zeros_(self.proj.weight)
         self.scale = nn.Parameter(torch.tensor(0.05, dtype=torch.float32))
-        self._primes = [36313, 27191, 51497, 73291, 91573]
 
-    def ngram_hash(self, tokens: Tensor) -> Tensor:
+    def bigram_hash(self, tokens: Tensor) -> Tensor:
         t = tokens.to(torch.int32)
-        mod = self.ngram_vocab_size - 1
-        h = self._primes[0] * t
-        for k in range(1, self.order):
-            t_shifted = F.pad(t[..., :-k], (k, 0), value=0)
-            h = torch.bitwise_xor(h, self._primes[k] * t_shifted)
-        h = h % mod
-        h[..., :self.order - 1] = mod
-        return h.long()
+        mod = self.bigram_vocab_size - 1
+        out = torch.empty_like(t)
+        out[..., 0] = mod
+        out[..., 1:] = torch.bitwise_xor(36313 * t[..., 1:], 27191 * t[..., :-1]) % mod
+        return out.long()
 
     def forward(self, token_ids: Tensor) -> Tensor:
-        h = self.embed(self.ngram_hash(token_ids))
+        h = self.embed(self.bigram_hash(token_ids))
         if self.proj is not None:
             h = self.proj(h)
         return h * self.scale.to(dtype=h.dtype)
@@ -653,7 +647,6 @@ class GPT(nn.Module):
         qk_gain_init: float,
         bigram_vocab_size: int = 0,
         bigram_dim: int = 128,
-        ngram_order: int = 2,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -662,7 +655,7 @@ class GPT(nn.Module):
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
-        self.bigram = NgramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim, order=ngram_order) if bigram_vocab_size > 0 else None
+        self.bigram = BigramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim) if bigram_vocab_size > 0 else None
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
         self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
@@ -923,7 +916,6 @@ def main() -> None:
         qk_gain_init=args.qk_gain_init,
         bigram_vocab_size=args.bigram_vocab_size,
         bigram_dim=args.bigram_dim,
-        ngram_order=args.ngram_order,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -1241,7 +1233,7 @@ if __name__ == "__main__":
 ====================================================================================================
 Running Python 3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]
 Running PyTorch 2.9.1+cu128
-Thu Mar 26 13:33:29 2026       
+Thu Mar 26 14:13:56 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.126.20             Driver Version: 580.126.20     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -1250,11 +1242,11 @@ Thu Mar 26 13:33:29 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 |   0  NVIDIA RTX PRO 4500 Blac...    On  |   00000000:82:00.0 Off |                  Off |
-| 41%   52C    P1             23W /  200W |     514MiB /  32623MiB |      0%      Default |
+| 40%   52C    P1             20W /  200W |     514MiB /  32623MiB |      1%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 |   1  NVIDIA RTX PRO 4500 Blac...    On  |   00000000:C1:00.0 Off |                  Off |
-| 47%   62C    P1             34W /  200W |     514MiB /  32623MiB |      0%      Default |
+| 46%   61C    P1             28W /  200W |     514MiB /  32623MiB |      0%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -1263,15 +1255,15 @@ Thu Mar 26 13:33:29 2026
 |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
 |        ID   ID                                                               Usage      |
 |=========================================================================================|
-|    0   N/A  N/A           40207      C   /usr/local/bin/python                   504MiB |
-|    1   N/A  N/A           40208      C   /usr/local/bin/python                   504MiB |
+|    0   N/A  N/A           48393      C   /usr/local/bin/python                   504MiB |
+|    1   N/A  N/A           48394      C   /usr/local/bin/python                   504MiB |
 +-----------------------------------------------------------------------------------------+
 
 ====================================================================================================
 val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path=./data/tokenizers/fineweb_1024_bpe.model
 train_loader:dataset:fineweb10B_sp1024 train_shards:80
 val_loader:shards pattern=./data/datasets/fineweb10B_sp1024/fineweb_val_*.bin tokens:62021632
-model_params:27373649
+model_params:25517137
 world_size:2 grad_accum_steps:4
 attention_mode:gqa num_heads:8 num_kv_heads:4
 tie_embeddings:True embed_lr:0.03 matrix_lr:0.02 scalar_lr:0.02
@@ -1297,39 +1289,26 @@ warmup_step:17/20
 warmup_step:18/20
 warmup_step:19/20
 warmup_step:20/20
-step:0/20000 val_loss:6.9270 val_bpb:4.1025 train_time:0ms step_avg:0.02ms
-step:1/20000 train_loss:6.9268 train_time:1129ms step_avg:1129.40ms
-step:2/20000 train_loss:7.9168 train_time:2236ms step_avg:1117.80ms
-step:3/20000 train_loss:7.7835 train_time:3350ms step_avg:1116.53ms
-step:4/20000 train_loss:7.4739 train_time:4463ms step_avg:1115.87ms
-step:5/20000 train_loss:7.1072 train_time:5578ms step_avg:1115.65ms
-step:6/20000 train_loss:6.8051 train_time:6694ms step_avg:1115.61ms
-step:7/20000 train_loss:6.5508 train_time:7814ms step_avg:1116.33ms
-step:8/20000 train_loss:6.3130 train_time:8963ms step_avg:1120.39ms
-step:9/20000 train_loss:6.1222 train_time:10077ms step_avg:1119.65ms
-step:10/20000 train_loss:5.9577 train_time:11192ms step_avg:1119.19ms
+step:0/20000 val_loss:6.9323 val_bpb:4.1057 train_time:0ms step_avg:0.03ms
+step:1/20000 train_loss:6.9330 train_time:1127ms step_avg:1126.91ms
+step:2/20000 train_loss:8.1745 train_time:2233ms step_avg:1116.37ms
+step:3/20000 train_loss:8.0372 train_time:3348ms step_avg:1115.84ms
+step:4/20000 train_loss:7.7002 train_time:4471ms step_avg:1117.64ms
+step:5/20000 train_loss:7.2896 train_time:5582ms step_avg:1116.48ms
+step:6/20000 train_loss:6.9557 train_time:6696ms step_avg:1115.94ms
+step:7/20000 train_loss:6.6699 train_time:7808ms step_avg:1115.45ms
+step:8/20000 train_loss:6.4044 train_time:8923ms step_avg:1115.33ms
+step:9/20000 train_loss:6.1923 train_time:10043ms step_avg:1115.85ms
+step:10/20000 train_loss:6.0183 train_time:11165ms step_avg:1116.52ms
 swa:start step:50
-step:50/20000 train_loss:4.7161 train_time:55623ms step_avg:1112.45ms
-step:100/20000 train_loss:3.5649 train_time:111549ms step_avg:1115.49ms
-step:150/20000 train_loss:3.2443 train_time:169403ms step_avg:1129.36ms
-step:200/20000 train_loss:2.9455 train_time:225373ms step_avg:1126.86ms
-step:200/20000 val_loss:2.9884 val_bpb:1.7699 train_time:225415ms step_avg:1127.08ms
-step:250/20000 train_loss:2.9702 train_time:281398ms step_avg:1125.59ms
-step:300/20000 train_loss:2.7307 train_time:339579ms step_avg:1131.93ms
-step:350/20000 train_loss:2.7407 train_time:395575ms step_avg:1130.21ms
-step:400/20000 train_loss:2.6675 train_time:452733ms step_avg:1131.83ms
-step:400/20000 val_loss:2.6295 val_bpb:1.5573 train_time:452776ms step_avg:1131.94ms
-step:450/20000 train_loss:2.4893 train_time:508765ms step_avg:1130.59ms
-step:500/20000 train_loss:2.5634 train_time:564774ms step_avg:1129.55ms
-step:530/20000 val_loss:2.5724 val_bpb:1.5235 train_time:600988ms step_avg:1133.94ms
-stopping_early: wallclock_cap train_time:600988ms step:530/20000
-peak memory allocated: 18956 MiB reserved: 19054 MiB
-swa:applying averaged 10 checkpoints
-Serialized model: 102084907 bytes
-Code size: 53266 bytes
-Total submission size: 102138173 bytes
-Serialized model int6+zlib: 17972191 bytes
-Total submission size int8+zlib: 18025457 bytes
-final_eval_mode:standard
-final_int8_zlib_roundtrip val_loss:2.9568 val_bpb:1.7512 eval_time:26174ms
-final_int8_zlib_roundtrip_exact val_loss:2.95678103 val_bpb:1.75117227
+step:50/20000 train_loss:4.7542 train_time:55559ms step_avg:1111.18ms
+step:100/20000 train_loss:3.6373 train_time:111488ms step_avg:1114.88ms
+step:150/20000 train_loss:3.2845 train_time:170942ms step_avg:1139.62ms
+step:200/20000 train_loss:2.9830 train_time:226885ms step_avg:1134.42ms
+step:200/20000 val_loss:3.0297 val_bpb:1.7944 train_time:226915ms step_avg:1134.57ms
+step:250/20000 train_loss:3.0149 train_time:282877ms step_avg:1131.51ms
+step:300/20000 train_loss:2.7709 train_time:342012ms step_avg:1140.04ms
+step:350/20000 train_loss:2.7840 train_time:397987ms step_avg:1137.10ms
+step:400/20000 train_loss:2.7131 train_time:457413ms step_avg:1143.53ms
+step:400/20000 val_loss:2.6735 val_bpb:1.5834 train_time:457443ms step_avg:1143.61ms
+step:450/20000 train_loss:2.5332 train_time:513369ms step_avg:1140.82ms

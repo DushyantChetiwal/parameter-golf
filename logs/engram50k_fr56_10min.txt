@@ -364,17 +364,43 @@ def mixed_quantize_int6(state_dict: dict[str, Tensor], int6_cats: set[str]):
             meta[name] = "passthrough_fp16"
             continue
         if cat in int6_cats and t.ndim >= 1:
-            clip = 15 if cat == "mlp" else 31  # int5 for MLP, int6 for attention
+            # int5 for MLP; int5 for large n-gram table rows (embed / embed_low) to save bytes;
+            # int6 for attention and bigram.proj / bigram.embed_up (up-projection).
+            if cat == "mlp":
+                clip = 15
+            elif cat == "bigram" and t.ndim == 2 and "proj" not in name and "embed_up" not in name:
+                clip = 15
+            else:
+                clip = 31
             q, s = quantize_intN_per_row(t, clip_range=clip)
             result[name + ".q"] = q
             result[name + ".scale"] = s
-            meta[name] = {"type": f"int{5 if cat == 'mlp' else 6}"}
+            meta[name] = {"type": f"int{5 if clip == 15 else 6}"}
         else:
             q, s = quantize_float_tensor(t)
             result[name + ".q"] = q
             result[name + ".scale"] = s
             meta[name] = {"type": "int8"}
     return result, meta
+
+def log_quant_result_nbytes(quant_result: dict[str, Tensor], log0) -> None:
+    """Rough byte sum per prefix (pre-zstd); set LOG_QUANT_BREAKDOWN=1 to print."""
+    groups: dict[str, int] = {"bigram": 0, "tok_emb_lm": 0, "blocks": 0, "other": 0}
+    for k, v in quant_result.items():
+        nb = tensor_nbytes(v)
+        if "bigram" in k:
+            groups["bigram"] += nb
+        elif "tok_emb" in k or "lm_head" in k:
+            groups["tok_emb_lm"] += nb
+        elif k.startswith("blocks.") or "skip_weight" in k or "smear" in k or "final_norm" in k:
+            groups["blocks"] += nb
+        else:
+            groups["other"] += nb
+    log0(
+        "quant_breakdown_pre_zstd_bytes bigram:"
+        f"{groups['bigram']} tok_emb_lm:{groups['tok_emb_lm']} blocks:{groups['blocks']} other:{groups['other']}"
+    )
+
 
 def dequantize_mixed_int6(result: dict[str, Tensor], meta: dict[str, object],
                           template_sd: dict[str, Tensor]) -> dict[str, Tensor]:
@@ -586,13 +612,42 @@ class SmearGate(nn.Module):
 
 
 class NgramHashEmbedding(nn.Module):
-    """Hash consecutive token N-grams into a learned embedding table (Engram-style)."""
-    def __init__(self, vocab_size: int, embed_dim: int, model_dim: int, order: int = 2):
+    """Hash consecutive token N-grams into a learned embedding table (Engram-style).
+
+    Paper gap vs Cheng et al. (arXiv:2601.07372): we use a single-head multiplicative-XOR
+    hash into one table (their multi-head K and multi-order concat are not reproduced here).
+    Memory is fused at the input (token_emb + ngram) rather than mid-backbone residual +
+    context gating + depthwise conv. Challenge-scale instantiation: optional low-rank
+    factorization VxR * RxD preserves O(1) lookup and cuts artifact size for large V.
+    """
+    def __init__(
+        self,
+        vocab_size: int,
+        embed_dim: int,
+        model_dim: int,
+        order: int = 2,
+        factor_rank: int = 0,
+    ):
         super().__init__()
         self.ngram_vocab_size = vocab_size
         self.order = order
-        self.embed = nn.Embedding(vocab_size, embed_dim)
-        nn.init.zeros_(self.embed.weight)
+        self.embed_dim = embed_dim
+        self.factor_rank = int(factor_rank)
+        self.embed: nn.Embedding | None
+        self.embed_low: nn.Embedding | None
+        self.embed_up: CastedLinear | None
+        if self.factor_rank > 0 and self.factor_rank < embed_dim:
+            self.embed_low = nn.Embedding(vocab_size, self.factor_rank)
+            nn.init.zeros_(self.embed_low.weight)
+            self.embed_up = CastedLinear(self.factor_rank, embed_dim, bias=False)
+            self.embed_up._zero_init = True
+            nn.init.zeros_(self.embed_up.weight)
+            self.embed = None
+        else:
+            self.embed = nn.Embedding(vocab_size, embed_dim)
+            nn.init.zeros_(self.embed.weight)
+            self.embed_low = None
+            self.embed_up = None
         self.proj = CastedLinear(embed_dim, model_dim, bias=False) if embed_dim != model_dim else None
         if self.proj is not None:
             nn.init.zeros_(self.proj.weight)
@@ -611,7 +666,12 @@ class NgramHashEmbedding(nn.Module):
         return h.long()
 
     def forward(self, token_ids: Tensor) -> Tensor:
-        h = self.embed(self.ngram_hash(token_ids))
+        idx = self.ngram_hash(token_ids)
+        if self.embed_low is not None and self.embed_up is not None:
+            h = self.embed_up(self.embed_low(idx))
+        else:
+            assert self.embed is not None
+            h = self.embed(idx)
         if self.proj is not None:
             h = self.proj(h)
         return h * self.scale.to(dtype=h.dtype)
@@ -654,6 +714,7 @@ class GPT(nn.Module):
         bigram_vocab_size: int = 0,
         bigram_dim: int = 128,
         ngram_order: int = 2,
+        ngram_factor_rank: int = 0,
     ):
         super().__init__()
         if logit_softcap <= 0.0:
@@ -662,7 +723,17 @@ class GPT(nn.Module):
         self.tied_embed_init_std = tied_embed_init_std
         self.logit_softcap = logit_softcap
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
-        self.bigram = NgramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim, order=ngram_order) if bigram_vocab_size > 0 else None
+        self.bigram = (
+            NgramHashEmbedding(
+                bigram_vocab_size,
+                bigram_dim,
+                model_dim,
+                order=ngram_order,
+                factor_rank=ngram_factor_rank,
+            )
+            if bigram_vocab_size > 0
+            else None
+        )
         self.num_encoder_layers = num_layers // 2
         self.num_decoder_layers = num_layers - self.num_encoder_layers
         self.num_skip_weights = min(self.num_encoder_layers, self.num_decoder_layers)
@@ -908,6 +979,15 @@ def main() -> None:
     log0(f"train_loader:dataset:{dataset_dir.name} train_shards:{actual_train_files}")
     log0(f"val_loader:shards pattern={args.val_files} tokens:{val_tokens.numel() - 1}")
 
+    raw_nfr = os.environ.get("NGRAM_FACTOR_RANK")
+    if raw_nfr is None:
+        ngram_factor_rank = 32 if args.bigram_vocab_size * args.bigram_dim >= 2_000_000 else 0
+    else:
+        ngram_factor_rank = int(raw_nfr)
+    if ngram_factor_rank > 0 and ngram_factor_rank >= args.bigram_dim:
+        ngram_factor_rank = 0
+    log0(f"ngram_factor_rank:{ngram_factor_rank} NGRAM_FACTOR_RANK_env:{raw_nfr!r}")
+
     # MODEL + OPTIMIZER SETUP
     base_model = GPT(
         vocab_size=args.vocab_size,
@@ -924,6 +1004,7 @@ def main() -> None:
         bigram_vocab_size=args.bigram_vocab_size,
         bigram_dim=args.bigram_dim,
         ngram_order=args.ngram_order,
+        ngram_factor_rank=ngram_factor_rank,
     ).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
@@ -950,9 +1031,15 @@ def main() -> None:
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     tok_params = [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}]
     if base_model.bigram is not None:
-        tok_params.append({"params": [base_model.bigram.embed.weight], "lr": token_lr, "base_lr": token_lr})
-        if base_model.bigram.proj is not None:
-            matrix_params.append(base_model.bigram.proj.weight)
+        bg = base_model.bigram
+        if bg.embed_low is not None:
+            tok_params.append({"params": [bg.embed_low.weight], "lr": token_lr, "base_lr": token_lr})
+            if bg.embed_up is not None:
+                matrix_params.append(bg.embed_up.weight)
+        elif bg.embed is not None:
+            tok_params.append({"params": [bg.embed.weight], "lr": token_lr, "base_lr": token_lr})
+        if bg.proj is not None:
+            matrix_params.append(bg.proj.weight)
 
     optimizer_tok = torch.optim.AdamW(
         tok_params,
@@ -1179,6 +1266,8 @@ def main() -> None:
     # INT6 mixed quantization + zstd/zlib export
     sd_cpu = {k: v.detach().cpu() for k, v in base_model.state_dict().items()}
     quant_result, quant_meta = mixed_quantize_int6(sd_cpu, {"mlp", "attn", "bigram"})
+    if master_process and int(os.environ.get("LOG_QUANT_BREAKDOWN", "0")):
+        log_quant_result_nbytes(quant_result, log0)
     quant_buf = io.BytesIO()
     torch.save({"w": quant_result, "m": quant_meta}, quant_buf)
     quant_raw = quant_buf.getvalue()
@@ -1193,6 +1282,12 @@ def main() -> None:
         code_bytes = len(code.encode("utf-8"))
         log0(f"Serialized model int6+{_COMPRESSOR}: {quant_file_bytes} bytes")
         log0(f"Total submission size int8+zlib: {quant_file_bytes + code_bytes} bytes")
+        cap = 16_000_000
+        if quant_file_bytes + code_bytes > cap:
+            log0(
+                f"WARNING:submission_over_cap total_bytes:{quant_file_bytes + code_bytes} "
+                f"exceeds_decimal_16mb_cap:{cap}"
+            )
 
     if distributed:
         dist.barrier()
@@ -1241,7 +1336,7 @@ if __name__ == "__main__":
 ====================================================================================================
 Running Python 3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]
 Running PyTorch 2.9.1+cu128
-Thu Mar 26 13:33:29 2026       
+Thu Mar 26 17:19:24 2026       
 +-----------------------------------------------------------------------------------------+
 | NVIDIA-SMI 580.126.20             Driver Version: 580.126.20     CUDA Version: 13.0     |
 +-----------------------------------------+------------------------+----------------------+
@@ -1250,11 +1345,11 @@ Thu Mar 26 13:33:29 2026
 |                                         |                        |               MIG M. |
 |=========================================+========================+======================|
 |   0  NVIDIA RTX PRO 4500 Blac...    On  |   00000000:82:00.0 Off |                  Off |
-| 41%   52C    P1             23W /  200W |     514MiB /  32623MiB |      0%      Default |
+| 31%   41C    P1             15W /  200W |     514MiB /  32623MiB |      0%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 |   1  NVIDIA RTX PRO 4500 Blac...    On  |   00000000:C1:00.0 Off |                  Off |
-| 47%   62C    P1             34W /  200W |     514MiB /  32623MiB |      0%      Default |
+| 37%   50C    P1             23W /  200W |     514MiB /  32623MiB |      0%      Default |
 |                                         |                        |                  N/A |
 +-----------------------------------------+------------------------+----------------------+
 
@@ -1263,15 +1358,16 @@ Thu Mar 26 13:33:29 2026
 |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
 |        ID   ID                                                               Usage      |
 |=========================================================================================|
-|    0   N/A  N/A           40207      C   /usr/local/bin/python                   504MiB |
-|    1   N/A  N/A           40208      C   /usr/local/bin/python                   504MiB |
+|    0   N/A  N/A           84627      C   /usr/local/bin/python                   504MiB |
+|    1   N/A  N/A           84628      C   /usr/local/bin/python                   504MiB |
 +-----------------------------------------------------------------------------------------+
 
 ====================================================================================================
 val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path=./data/tokenizers/fineweb_1024_bpe.model
 train_loader:dataset:fineweb10B_sp1024 train_shards:80
 val_loader:shards pattern=./data/datasets/fineweb10B_sp1024/fineweb_val_*.bin tokens:62021632
-model_params:27373649
+ngram_factor_rank:56 NGRAM_FACTOR_RANK_env:'56'
+model_params:26977233
 world_size:2 grad_accum_steps:4
 attention_mode:gqa num_heads:8 num_kv_heads:4
 tie_embeddings:True embed_lr:0.03 matrix_lr:0.02 scalar_lr:0.02
@@ -1297,39 +1393,39 @@ warmup_step:17/20
 warmup_step:18/20
 warmup_step:19/20
 warmup_step:20/20
-step:0/20000 val_loss:6.9270 val_bpb:4.1025 train_time:0ms step_avg:0.02ms
-step:1/20000 train_loss:6.9268 train_time:1129ms step_avg:1129.40ms
-step:2/20000 train_loss:7.9168 train_time:2236ms step_avg:1117.80ms
-step:3/20000 train_loss:7.7835 train_time:3350ms step_avg:1116.53ms
-step:4/20000 train_loss:7.4739 train_time:4463ms step_avg:1115.87ms
-step:5/20000 train_loss:7.1072 train_time:5578ms step_avg:1115.65ms
-step:6/20000 train_loss:6.8051 train_time:6694ms step_avg:1115.61ms
-step:7/20000 train_loss:6.5508 train_time:7814ms step_avg:1116.33ms
-step:8/20000 train_loss:6.3130 train_time:8963ms step_avg:1120.39ms
-step:9/20000 train_loss:6.1222 train_time:10077ms step_avg:1119.65ms
-step:10/20000 train_loss:5.9577 train_time:11192ms step_avg:1119.19ms
+step:0/20000 val_loss:6.9292 val_bpb:4.1038 train_time:0ms step_avg:0.03ms
+step:1/20000 train_loss:6.9295 train_time:1123ms step_avg:1122.55ms
+step:2/20000 train_loss:7.9716 train_time:2223ms step_avg:1111.47ms
+step:3/20000 train_loss:7.8363 train_time:3329ms step_avg:1109.82ms
+step:4/20000 train_loss:7.5212 train_time:4439ms step_avg:1109.75ms
+step:5/20000 train_loss:7.1481 train_time:5751ms step_avg:1150.17ms
+step:6/20000 train_loss:6.8522 train_time:6863ms step_avg:1143.77ms
+step:7/20000 train_loss:6.5982 train_time:7973ms step_avg:1139.01ms
+step:8/20000 train_loss:6.3542 train_time:9085ms step_avg:1135.60ms
+step:9/20000 train_loss:6.1571 train_time:10197ms step_avg:1133.05ms
+step:10/20000 train_loss:5.9969 train_time:11308ms step_avg:1130.80ms
 swa:start step:50
-step:50/20000 train_loss:4.7161 train_time:55623ms step_avg:1112.45ms
-step:100/20000 train_loss:3.5649 train_time:111549ms step_avg:1115.49ms
-step:150/20000 train_loss:3.2443 train_time:169403ms step_avg:1129.36ms
-step:200/20000 train_loss:2.9455 train_time:225373ms step_avg:1126.86ms
-step:200/20000 val_loss:2.9884 val_bpb:1.7699 train_time:225415ms step_avg:1127.08ms
-step:250/20000 train_loss:2.9702 train_time:281398ms step_avg:1125.59ms
-step:300/20000 train_loss:2.7307 train_time:339579ms step_avg:1131.93ms
-step:350/20000 train_loss:2.7407 train_time:395575ms step_avg:1130.21ms
-step:400/20000 train_loss:2.6675 train_time:452733ms step_avg:1131.83ms
-step:400/20000 val_loss:2.6295 val_bpb:1.5573 train_time:452776ms step_avg:1131.94ms
-step:450/20000 train_loss:2.4893 train_time:508765ms step_avg:1130.59ms
-step:500/20000 train_loss:2.5634 train_time:564774ms step_avg:1129.55ms
-step:530/20000 val_loss:2.5724 val_bpb:1.5235 train_time:600988ms step_avg:1133.94ms
-stopping_early: wallclock_cap train_time:600988ms step:530/20000
-peak memory allocated: 18956 MiB reserved: 19054 MiB
+step:50/20000 train_loss:4.8926 train_time:55633ms step_avg:1112.66ms
+step:100/20000 train_loss:3.8127 train_time:111418ms step_avg:1114.18ms
+step:150/20000 train_loss:3.3787 train_time:170672ms step_avg:1137.82ms
+step:200/20000 train_loss:3.0395 train_time:226522ms step_avg:1132.61ms
+step:200/20000 val_loss:3.0861 val_bpb:1.8278 train_time:226569ms step_avg:1132.84ms
+step:250/20000 train_loss:3.0623 train_time:282472ms step_avg:1129.89ms
+step:300/20000 train_loss:2.7997 train_time:340435ms step_avg:1134.78ms
+step:350/20000 train_loss:2.8058 train_time:396362ms step_avg:1132.46ms
+step:400/20000 train_loss:2.7298 train_time:454792ms step_avg:1136.98ms
+step:400/20000 val_loss:2.6910 val_bpb:1.5937 train_time:454822ms step_avg:1137.06ms
+step:450/20000 train_loss:2.5461 train_time:510680ms step_avg:1134.84ms
+step:500/20000 train_loss:2.6210 train_time:566605ms step_avg:1133.21ms
+step:529/20000 val_loss:2.6274 val_bpb:1.5561 train_time:600913ms step_avg:1135.94ms
+stopping_early: wallclock_cap train_time:600913ms step:529/20000
+peak memory allocated: 18962 MiB reserved: 19072 MiB
 swa:applying averaged 10 checkpoints
-Serialized model: 102084907 bytes
-Code size: 53266 bytes
-Total submission size: 102138173 bytes
-Serialized model int6+zlib: 17972191 bytes
-Total submission size int8+zlib: 18025457 bytes
+Serialized model: 101299629 bytes
+Code size: 57118 bytes
+Total submission size: 101356747 bytes
+Serialized model int6+zstd: 14609044 bytes
+Total submission size int8+zlib: 14666162 bytes
 final_eval_mode:standard
-final_int8_zlib_roundtrip val_loss:2.9568 val_bpb:1.7512 eval_time:26174ms
-final_int8_zlib_roundtrip_exact val_loss:2.95678103 val_bpb:1.75117227
+final_int8_zlib_roundtrip val_loss:3.0679 val_bpb:1.8170 eval_time:25953ms
+final_int8_zlib_roundtrip_exact val_loss:3.06793161 val_bpb:1.81700191
