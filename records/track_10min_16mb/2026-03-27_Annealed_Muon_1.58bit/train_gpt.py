@@ -1,5 +1,6 @@
 """
 Annealed-Muon 1.58-bit model utilizing a depth recurrent Core Brain
+Compliant with the 10-minute / 16MB Parameter Golf Constraints.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.checkpoint import checkpoint
 
 # -----------------------------
 # HYPERPARAMETERS
@@ -40,7 +40,7 @@ class Hyperparameters:
 
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 1000))
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 100))
+    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 200))
 
     iterations = int(os.environ.get("ITERATIONS", 12000))
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 0))
@@ -50,8 +50,9 @@ class Hyperparameters:
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
     qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
+    # Core Brain Model Shape (~70M distinct parameters)
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 12))
+    num_layers = int(os.environ.get("NUM_LAYERS", 12)) # Number of recurrent loops
     num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 8))
     model_dim = int(os.environ.get("MODEL_DIM", 2048))
     num_heads = int(os.environ.get("NUM_HEADS", 16))
@@ -62,25 +63,23 @@ class Hyperparameters:
 
     embed_lr = float(os.environ.get("EMBED_LR", 0.6))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.035))
+    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.02))
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.02))
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.99))
+    matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
+    scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
-    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.92))
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 1500))
-    muon_weight_decay = float(os.environ.get("MUON_WEIGHT_DECAY", 0.04))
-    adam_weight_decay = float(os.environ.get("ADAM_WEIGHT_DECAY", 0.04))
+    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 500))
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
-    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.3))
+    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
     
     latent_clip_scale = float(os.environ.get("LATENT_CLIP_SCALE", 3.0))
 
 # -----------------------------
-# MUON OPTIMIZER
+# MUON OPTIMIZER 
 # -----------------------------
 
 def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -> Tensor:
@@ -96,11 +95,12 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int = 10, eps: float = 1e-7) -
         X = a * X + B @ X
     return X.T if transposed else X
 
+
 class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr: float, momentum: float, backend_steps: int, nesterov: bool = True, weight_decay: float = 0.0):
+    def __init__(self, params, lr: float, momentum: float, backend_steps: int, nesterov: bool = True):
         super().__init__(
             params,
-            dict(lr=lr, momentum=momentum, backend_steps=backend_steps, nesterov=nesterov, weight_decay=weight_decay),
+            dict(lr=lr, momentum=momentum, backend_steps=backend_steps, nesterov=nesterov),
         )
 
     @torch.no_grad()
@@ -148,19 +148,16 @@ class Muon(torch.optim.Optimizer):
             curr = 0
             for p in params:
                 g = updates_flat[curr : curr + p.numel()].view_as(p).to(dtype=p.dtype)
-                p.mul_(1.0 - lr * group.get("weight_decay", 0.0))
                 p.add_(g, alpha=-lr)
                 curr += p.numel()
 
         return loss
 
 # -----------------------------
-# TOKENIZER-AGNOSTIC EVALUATION SETUP
+# TOKENIZER-AGNOSTIC EVALUATION 
 # -----------------------------
 
-def build_sentencepiece_luts(
-    sp: spm.SentencePieceProcessor, vocab_size: int, device: torch.device
-) -> tuple[Tensor, Tensor, Tensor]:
+def build_sentencepiece_luts(sp: spm.SentencePieceProcessor, vocab_size: int, device: torch.device) -> tuple[Tensor, Tensor, Tensor]:
     sp_vocab_size = int(sp.vocab_size())
     table_size = max(sp_vocab_size, vocab_size)
     base_bytes_np = np.zeros((table_size,), dtype=np.int16)
@@ -174,7 +171,7 @@ def build_sentencepiece_luts(
             base_bytes_np[token_id] = 1
             continue
         piece = sp.id_to_piece(token_id)
-        if piece.startswith("\u2581"):
+        if piece.startswith("▁"):
             has_leading_space_np[token_id] = True
             piece = piece[1:]
         base_bytes_np[token_id] = len(piece.encode("utf-8"))
@@ -194,25 +191,10 @@ def load_validation_tokens(pattern: str, seq_len: int) -> Tensor:
         raise ValueError(f"Validation split is too short for TRAIN_SEQ_LEN={seq_len}")
     return tokens[: usable + 1]
 
-def eval_val(
-    args: Hyperparameters,
-    model: nn.Module,
-    rank: int,
-    world_size: int,
-    device: torch.device,
-    grad_accum_steps: int,
-    val_tokens: Tensor,
-    base_bytes_lut: Tensor,
-    has_leading_space_lut: Tensor,
-    is_boundary_token_lut: Tensor,
-) -> tuple[float, float]:
+def eval_val(args: Hyperparameters, model: nn.Module, rank: int, world_size: int, device: torch.device, grad_accum_steps: int, val_tokens: Tensor, base_bytes_lut: Tensor, has_leading_space_lut: Tensor, is_boundary_token_lut: Tensor) -> tuple[float, float]:
     local_batch_tokens = args.val_batch_size // (world_size * grad_accum_steps)
     if local_batch_tokens < args.train_seq_len:
-        raise ValueError(
-            "VAL_BATCH_SIZE must provide at least one sequence per rank; "
-            f"got VAL_BATCH_SIZE={args.val_batch_size}, WORLD_SIZE={world_size}, "
-            f"GRAD_ACCUM_STEPS={grad_accum_steps}, TRAIN_SEQ_LEN={args.train_seq_len}"
-        )
+        raise ValueError("VAL_BATCH_SIZE must provide at least one sequence per rank")
     local_batch_seqs = local_batch_tokens // args.train_seq_len
     total_seqs = (val_tokens.numel() - 1) // args.train_seq_len
     seq_start = (total_seqs * rank) // world_size
@@ -222,6 +204,10 @@ def eval_val(
     val_byte_count = torch.zeros((), device=device, dtype=torch.float64)
 
     model.eval()
+    # Default to discrete frozen math for evaluation.
+    tau_eval = torch.tensor(0.01, device=device, dtype=torch.float32)
+    step_eval = torch.tensor(1.0, device=device, dtype=torch.float32)
+
     with torch.inference_mode():
         for batch_seq_start in range(seq_start, seq_end, local_batch_seqs):
             batch_seq_end = min(batch_seq_start + local_batch_seqs, seq_end)
@@ -231,7 +217,7 @@ def eval_val(
             x = local[:-1].reshape(-1, args.train_seq_len)
             y = local[1:].reshape(-1, args.train_seq_len)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                batch_loss = model(x, y).detach()
+                batch_loss = model(x, y, tau=tau_eval, step_fraction=step_eval).detach()
             batch_token_count = float(y.numel())
             val_loss_sum += batch_loss.to(torch.float64) * batch_token_count
             val_token_count += batch_token_count
@@ -253,13 +239,13 @@ def eval_val(
     return float(val_loss.item()), float(bits_per_token * tokens_per_byte)
 
 # -----------------------------
-# BASE-3 PACKING
+# BASE-3 PACKING (1.58 BIT)
 # -----------------------------
 
 def pack_base3_uint8(w_latent: Tensor) -> tuple[Tensor, int, int, int]:
     out_features, in_features = w_latent.shape
     w_discrete = w_latent.clamp(-1.0, 1.0).round()
-    d = (w_discrete + 1).to(torch.uint8).flatten() 
+    d = (w_discrete + 1.0).to(torch.uint8).flatten() 
     remainder = d.numel() % 5
     if remainder != 0:
         pad_len = 5 - remainder
@@ -283,7 +269,7 @@ def unpack_base3_uint8(v_packed: Tensor, out_features: int, in_features: int, pa
     return w_discrete.view(out_features, in_features)
 
 # -----------------------------
-# DATA LOADING
+# DATA LOADING 
 # -----------------------------
 
 def load_data_shard(file: Path) -> Tensor:
@@ -363,6 +349,12 @@ class CastedLinear(nn.Linear):
         bias = self.bias.to(x.dtype) if self.bias is not None else None
         return F.linear(x, self.weight.to(x.dtype), bias)
 
+def restore_low_dim_params_to_fp32(module: nn.Module) -> None:
+    with torch.no_grad():
+        for name, param in module.named_parameters():
+            if (param.ndim < 2 or "gamma" in name or "beta" in name) and param.dtype != torch.float32:
+                param.data = param.data.float()
+
 class AnnealedBitLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool = False):
         super().__init__()
@@ -375,21 +367,17 @@ class AnnealedBitLinear(nn.Module):
         else:
             self.register_parameter('bias', None)
         self._zero_init = False
-        
-        self.register_buffer('tau', torch.tensor(1.0))
-        self.register_buffer('step_fraction', torch.tensor(0.0))
 
-    def forward(self, x: Tensor) -> Tensor:
-        tau = self.tau.clamp(min=1e-4)
+    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+        tau_safe = tau.clamp(min=1e-4)
         W_active_tanh = 0.5 * (
-            torch.tanh((self.weight_latent + 0.5) / tau) +
-            torch.tanh((self.weight_latent - 0.5) / tau)
+            torch.tanh((self.weight_latent + 0.5) / tau_safe) +
+            torch.tanh((self.weight_latent - 0.5) / tau_safe)
         )
         w_discrete = self.weight_latent.clamp(-1.0, 1.0).round()
         W_active_snap = (w_discrete - self.weight_latent).detach() + self.weight_latent
         
-        W_active = torch.where(self.step_fraction > 0.95, W_active_snap, W_active_tanh)
-        
+        W_active = torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh)
         bias = self.bias.to(x.dtype) if self.bias is not None else None
         return F.linear(x, W_active.to(x.dtype), bias)
 
@@ -403,12 +391,8 @@ class Rotary(nn.Module):
         self._sin_cached: Tensor | None = None
 
     def forward(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
-        if (
-            self._cos_cached is None
-            or self._sin_cached is None
-            or self._seq_len_cached != seq_len
-            or self._cos_cached.device != device
-        ):
+        if (self._cos_cached is None or self._sin_cached is None
+            or self._seq_len_cached != seq_len or self._cos_cached.device != device):
             t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
             freqs = torch.outer(t, self.inv_freq.to(device))
             self._cos_cached = freqs.cos()[None, None, :, :]
@@ -438,11 +422,11 @@ class CausalSelfAttention(nn.Module):
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
         bsz, seqlen, dim = x.shape
-        q = self.c_q(x).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.c_k(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.c_v(x).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = self.c_q(x, tau, step_fraction).reshape(bsz, seqlen, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.c_k(x, tau, step_fraction).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.c_v(x, tau, step_fraction).reshape(bsz, seqlen, self.num_kv_heads, self.head_dim).transpose(1, 2)
         
         q = F.rms_norm(q, (q.size(-1),))
         k = F.rms_norm(k, (k.size(-1),))
@@ -455,7 +439,7 @@ class CausalSelfAttention(nn.Module):
             q, k, v, attn_mask=None, is_causal=True, enable_gqa=(self.num_kv_heads != self.num_heads)
         )
         y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
-        return self.proj(y)
+        return self.proj(y, tau, step_fraction)
 
 class MLP(nn.Module):
     def __init__(self, dim: int, mlp_mult: int):
@@ -465,9 +449,9 @@ class MLP(nn.Module):
         self.proj = AnnealedBitLinear(hidden, dim, bias=False)
         self.proj._zero_init = True
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = torch.relu(self.fc(x))
-        return self.proj(x.square())
+    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+        x = torch.relu(self.fc(x, tau, step_fraction))
+        return self.proj(x.square(), tau, step_fraction)
 
 class Block(nn.Module):
     def __init__(self, dim: int, num_heads: int, num_kv_heads: int, mlp_mult: int, rope_base: float, qk_gain_init: float):
@@ -479,28 +463,15 @@ class Block(nn.Module):
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
 
-    def forward(self, x: Tensor) -> Tensor:
-        attn_out = self.attn(self.attn_norm(x))
+    def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
+        attn_out = self.attn(self.attn_norm(x), tau, step_fraction)
         delta_attn = self.attn_scale.to(dtype=x.dtype)[None, None, :] * attn_out
         x_mid = x + delta_attn
-        delta_mlp = self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x_mid))
+        delta_mlp = self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x_mid), tau, step_fraction)
         return delta_attn + delta_mlp
 
 class GPT(nn.Module):
-    def __init__(
-        self,
-        vocab_size: int,
-        num_layers: int,
-        model_dim: int,
-        num_heads: int,
-        num_kv_heads: int,
-        mlp_mult: int,
-        tie_embeddings: bool,
-        tied_embed_init_std: float,
-        logit_softcap: float,
-        rope_base: float,
-        qk_gain_init: float,
-    ):
+    def __init__(self, vocab_size: int, num_layers: int, model_dim: int, num_heads: int, num_kv_heads: int, mlp_mult: int, tie_embeddings: bool, tied_embed_init_std: float, logit_softcap: float, rope_base: float, qk_gain_init: float):
         super().__init__()
         self.tie_embeddings = tie_embeddings
         self.tied_embed_init_std = tied_embed_init_std
@@ -510,9 +481,7 @@ class GPT(nn.Module):
         self.num_loops = num_layers
         self.sub_ln = RMSNorm()
         
-        self.core_brain = Block(
-            model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init
-        )
+        self.core_brain = Block(model_dim, num_heads, num_kv_heads, mlp_mult, rope_base, qk_gain_init)
         
         self.gamma = nn.ParameterList([nn.Parameter(torch.ones(model_dim)) for _ in range(self.num_loops)])
         self.beta = nn.ParameterList([nn.Parameter(torch.zeros(model_dim)) for _ in range(self.num_loops)])
@@ -539,22 +508,19 @@ class GPT(nn.Module):
                             with torch.no_grad():
                                 w.mul_(1.0 / math.sqrt(2 * self.num_loops))
 
-    def forward(self, input_ids: Tensor, target_ids: Tensor | None = None) -> Tensor:
+    def forward(self, input_ids: Tensor, target_ids: Tensor | None = None, tau: Tensor | None = None, step_fraction: Tensor | None = None) -> Tensor:
+        if tau is None:
+            tau = torch.tensor(0.01, device=input_ids.device, dtype=torch.float32)
+        if step_fraction is None:
+            step_fraction = torch.tensor(1.0, device=input_ids.device, dtype=torch.float32)
+
         x = self.tok_emb(input_ids)
         x = F.rms_norm(x, (x.size(-1),))
         
         for l in range(self.num_loops):
-            def loop_forward(x_in, gamma_in, beta_in):
-                normalized_x = self.sub_ln(x_in)
-                core_out = self.core_brain(normalized_x)
-                return core_out * gamma_in + beta_in
-            
-            if self.training:
-                modulated_delta = checkpoint(loop_forward, x, self.gamma[l], self.beta[l], use_reentrant=False)
-            else:
-                modulated_delta = loop_forward(x, self.gamma[l], self.beta[l])
-            
-            x = x + modulated_delta
+            normalized_x = self.sub_ln(x)
+            core_out = self.core_brain(normalized_x, tau, step_fraction)
+            x = x + core_out * self.gamma[l].to(x.dtype) + self.beta[l].to(x.dtype)
 
         x = self.final_norm(x).reshape(-1, x.size(-1))
         
@@ -606,7 +572,6 @@ def main() -> None:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     from torch.backends.cuda import enable_cudnn_sdp, enable_flash_sdp, enable_math_sdp, enable_mem_efficient_sdp
-
     enable_cudnn_sdp(False)
     enable_flash_sdp(True)
     enable_mem_efficient_sdp(False)
@@ -631,10 +596,7 @@ def main() -> None:
     log0("=" * 100, console=False)
     log0(f"Running Python {sys.version}", console=False)
     log0(f"Running PyTorch {torch.__version__}", console=False)
-    log0(
-        subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False).stdout,
-        console=False,
-    )
+    log0(subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False).stdout, console=False)
     log0("=" * 100, console=False)
 
     random.seed(args.seed)
@@ -673,7 +635,7 @@ def main() -> None:
     for module in base_model.modules():
         if isinstance(module, CastedLinear):
             module.float()
-            
+    restore_low_dim_params_to_fp32(base_model)
     compiled_model = torch.compile(base_model, dynamic=False, fullgraph=True)
     model: nn.Module = DDP(compiled_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else compiled_model
 
@@ -690,16 +652,16 @@ def main() -> None:
     token_lr = args.tied_embed_lr if args.tie_embeddings else args.embed_lr
     optimizer_tok = torch.optim.AdamW(
         [{"params": [base_model.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
-        betas=(args.beta1, args.beta2), eps=args.adam_eps, weight_decay=args.adam_weight_decay, fused=True,
+        betas=(args.beta1, args.beta2), eps=args.adam_eps, weight_decay=args.adam_weight_decay if hasattr(args, 'adam_weight_decay') else 0.0, fused=True,
     )
     optimizer_muon = Muon(
-        matrix_params, lr=args.matrix_lr, momentum=args.muon_momentum, backend_steps=args.muon_backend_steps, weight_decay=args.muon_weight_decay,
+        matrix_params, lr=args.matrix_lr, momentum=args.muon_momentum, backend_steps=args.muon_backend_steps,
     )
     for group in optimizer_muon.param_groups:
         group["base_lr"] = args.matrix_lr
     optimizer_scalar = torch.optim.AdamW(
         [{"params": scalar_params, "lr": args.scalar_lr, "base_lr": args.scalar_lr}],
-        betas=(args.beta1, args.beta2), eps=args.adam_eps, weight_decay=args.adam_weight_decay, fused=True,
+        betas=(args.beta1, args.beta2), eps=args.adam_eps, weight_decay=args.adam_weight_decay if hasattr(args, 'adam_weight_decay') else 0.0, fused=True,
     )
     optimizers: list[torch.optim.Optimizer] = [optimizer_tok, optimizer_muon, optimizer_scalar]
     if base_model.lm_head is not None:
@@ -712,7 +674,6 @@ def main() -> None:
     n_params = sum(p.numel() for p in base_model.parameters())
     log0(f"model_params:{n_params}")
     log0(f"world_size:{world_size} grad_accum_steps:{grad_accum_steps}")
-    log0("sdp_backends:cudnn=False flash=True mem_efficient=False math=False")
     log0(
         f"train_batch_tokens:{args.train_batch_tokens} train_seq_len:{args.train_seq_len} "
         f"iterations:{args.iterations} max_wallclock_seconds:{args.max_wallclock_seconds:.3f}"
@@ -726,19 +687,49 @@ def main() -> None:
 
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
 
+    def lr_mul(step: int, elapsed_ms: float) -> float:
+        if args.warmdown_iters <= 0:
+            return 1.0
+        if max_wallclock_ms is None:
+            warmdown_start = max(args.iterations - args.warmdown_iters, 0)
+            return max((args.iterations - step) / max(args.warmdown_iters, 1), 0.0) if warmdown_start <= step < args.iterations else 1.0
+        step_ms = elapsed_ms / max(step, 1)
+        warmdown_ms = args.warmdown_iters * step_ms
+        remaining_ms = max(max_wallclock_ms - elapsed_ms, 0.0)
+        return remaining_ms / max(warmdown_ms, 1e-9) if remaining_ms <= warmdown_ms else 1.0
+
+    if args.warmup_steps > 0:
+        initial_model_state = {name: tensor.detach().cpu().clone() for name, tensor in base_model.state_dict().items()}
+        initial_optimizer_states = [copy.deepcopy(opt.state_dict()) for opt in optimizers]
+        model.train()
+        for warmup_step in range(args.warmup_steps):
+            zero_grad_all()
+            for micro_step in range(grad_accum_steps):
+                if distributed:
+                    model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+                x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                    warmup_loss = model(x, y, tau=torch.tensor(1.0, device=device), step_fraction=torch.tensor(0.0, device=device))
+                (warmup_loss * grad_scale).backward()
+            for opt in optimizers:
+                opt.step()
+            zero_grad_all()
+        base_model.load_state_dict(initial_model_state, strict=True)
+        for opt, state in zip(optimizers, initial_optimizer_states, strict=True):
+            opt.load_state_dict(state)
+        zero_grad_all()
+        if distributed:
+            model.require_backward_grad_sync = True
+        train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
+
     training_time_ms = 0.0
+    stop_after_step: int | None = None
     torch.cuda.synchronize()
     t0 = time.perf_counter()
     step = 0
     
-    @torch.compile(dynamic=False, fullgraph=True)
-    def train_step(x, y):
-        # We don't compile this function directly because we compile the base_model earlier.
-        # But we use DDP on base_model, so we just run standard forward backward in the loop.
-        pass
-
     while True:
-        last_step = step == args.iterations
+        last_step = step == args.iterations or (stop_after_step is not None and step >= stop_after_step)
         should_validate = last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0)
         
         if should_validate:
@@ -760,40 +751,34 @@ def main() -> None:
 
         fraction = min(step / args.iterations, 1.0)
         cos_fraction = 0.5 * (1 + math.cos(math.pi * fraction))
-        
-        eta = 0.0001 + (0.02 - 0.0001) * cos_fraction
         tau_val = 0.01 + (1.0 - 0.01) * cos_fraction
         
-        with torch.no_grad():
-            for module in base_model.modules():
-                if isinstance(module, AnnealedBitLinear):
-                    module.tau.fill_(tau_val)
-                    module.step_fraction.fill_(fraction)
-
-        for opt in optimizers:
-            for group in opt.param_groups:
-                if 'muon' in getattr(opt, '__class__', object).__name__.lower():
-                    group["lr"] = eta
-                else:
-                    group["lr"] = group["base_lr"] * cos_fraction
-
+        tau_tensor = torch.tensor([tau_val], device=device, dtype=torch.float32)
+        fraction_tensor = torch.tensor([fraction], device=device, dtype=torch.float32)
+        
+        elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
+        scale = lr_mul(step, elapsed_ms)
         zero_grad_all()
+        
         train_loss = torch.zeros((), device=device)
         for micro_step in range(grad_accum_steps):
             if distributed:
                 model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
             x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
-                loss = model(x, y)
+                loss = model(x, y, tau=tau_tensor, step_fraction=fraction_tensor)
             train_loss += loss.detach()
             (loss * grad_scale).backward()
         train_loss /= grad_accum_steps
 
-        # muon momentum warmup
         frac_muon = min(step / args.muon_momentum_warmup_steps, 1.0) if args.muon_momentum_warmup_steps > 0 else 1.0
         muon_momentum = (1 - frac_muon) * args.muon_momentum_warmup_start + frac_muon * args.muon_momentum
         for group in optimizer_muon.param_groups:
             group["momentum"] = muon_momentum
+
+        for opt in optimizers:
+            for group in opt.param_groups:
+                group["lr"] = group["base_lr"] * scale
 
         if args.grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
@@ -801,7 +786,7 @@ def main() -> None:
         for opt in optimizers:
             opt.step()
             
-        # Proximal Clipping natively in eager python
+        # Proximal Clipping natively in eager python (outside compilation graph)
         with torch.no_grad():
             bound = 1.0 + args.latent_clip_scale * tau_val
             for module in base_model.modules():
@@ -811,7 +796,17 @@ def main() -> None:
         step += 1
         approx_training_time_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         
-        if args.train_log_every > 0 and (step <= 10 or step % args.train_log_every == 0):
+        reached_cap = max_wallclock_ms is not None and approx_training_time_ms >= max_wallclock_ms
+        if distributed and max_wallclock_ms is not None:
+            cap_tensor = torch.tensor([1 if reached_cap else 0], dtype=torch.int32, device=device)
+            dist.all_reduce(cap_tensor, op=dist.ReduceOp.MAX)
+            reached_cap = cap_tensor.item() > 0
+
+        if stop_after_step is None and reached_cap:
+            log0(f"stopping_early: max_wallclock_ms cap reached at step {step}")
+            stop_after_step = step 
+        
+        if args.train_log_every > 0 and (step <= 10 or step % args.train_log_every == 0 or stop_after_step is not None):
             log0(f"step:{step}/{args.iterations} train_loss:{train_loss.item():.4f} "
                  f"train_time:{approx_training_time_ms:.0f}ms step_avg:{approx_training_time_ms / step:.2f}ms")
 
@@ -873,9 +868,6 @@ def main() -> None:
             dequant_state_dict[name] = param
 
     base_model.load_state_dict(dequant_state_dict, strict=False)
-    for module in base_model.modules():
-        if isinstance(module, AnnealedBitLinear):
-            module.step_fraction.fill_(1.0)
             
     torch.cuda.synchronize()
     t_qeval = time.perf_counter()
