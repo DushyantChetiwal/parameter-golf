@@ -1361,3 +1361,99 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+====================================================================================================
+Running Python 3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]
+Running PyTorch 2.9.1+cu128
+Wed Mar 25 22:40:15 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A40                     On  |   00000000:52:00.0 Off |                    0 |
+|  0%   67C    P0            288W /  300W |   20712MiB /  46068MiB |    100%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA A40                     On  |   00000000:D5:00.0 Off |                    0 |
+|  0%   66C    P0            292W /  300W |   20712MiB /  46068MiB |     98%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A           92890      C   /usr/local/bin/python                 20280MiB |
+|    0   N/A  N/A          104358      C   /usr/local/bin/python                   418MiB |
+|    1   N/A  N/A           92891      C   /usr/local/bin/python                 20280MiB |
+|    1   N/A  N/A          104359      C   /usr/local/bin/python                   418MiB |
++-----------------------------------------------------------------------------------------+
+
+====================================================================================================
+val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path=./data/tokenizers/fineweb_1024_bpe.model
+train_loader:dataset:fineweb10B_sp1024 train_shards:80
+val_loader:shards pattern=./data/datasets/fineweb10B_sp1024/fineweb_val_*.bin tokens:62021632
+model_params:10574880
+architecture:shared_blocks num_unique_blocks:4 num_loops:3 effective_layers:12
+world_size:2 grad_accum_steps:4
+sdp_backends:cudnn=False flash=True mem_efficient=False math=False
+attention_mode:gqa num_heads:8 num_kv_heads:4
+tie_embeddings:True embed_lr:0.05 head_lr:0.0 matrix_lr:0.04 scalar_lr:0.04
+train_batch_tokens:524288 train_seq_len:1024 iterations:20000 warmup_steps:20 max_wallclock_seconds:600.000
+qat_enabled:True qat_int6:True use_zstd:True fp16_embed:True
+trigram_enabled:True trigram_buckets:4096 trigram_dim:128
+delta_enabled:False delta_rank:8
+value_residual:False
+adaptive_quant:True ttt_enabled:True normuon:False
+seed:1337
+warmup_step:1/20
+warmup_step:2/20
+warmup_step:3/20
+warmup_step:4/20
+warmup_step:5/20
+warmup_step:6/20
+warmup_step:7/20
+warmup_step:8/20
+warmup_step:9/20
+warmup_step:10/20
+warmup_step:11/20
+warmup_step:12/20
+warmup_step:13/20
+warmup_step:14/20
+warmup_step:15/20
+warmup_step:16/20
+warmup_step:17/20
+warmup_step:18/20
+warmup_step:19/20
+warmup_step:20/20
+step:0/20000 val_loss:6.9339 val_bpb:4.1066 train_time:0ms step_avg:0.02ms
+step:1/20000 train_loss:6.9333 train_time:2269ms step_avg:2269.02ms
+step:2/20000 train_loss:12.3929 train_time:4330ms step_avg:2165.09ms
+step:3/20000 train_loss:9.2315 train_time:6635ms step_avg:2211.82ms
+step:4/20000 train_loss:7.0119 train_time:8855ms step_avg:2213.72ms
+step:5/20000 train_loss:6.1635 train_time:11068ms step_avg:2213.60ms
+step:6/20000 train_loss:5.9843 train_time:13294ms step_avg:2215.63ms
+step:7/20000 train_loss:5.8235 train_time:15538ms step_avg:2219.74ms
+step:8/20000 train_loss:5.8136 train_time:17765ms step_avg:2220.58ms
+step:9/20000 train_loss:5.7957 train_time:20000ms step_avg:2222.23ms
+step:10/20000 train_loss:5.7598 train_time:22255ms step_avg:2225.48ms
+step:50/20000 train_loss:4.4071 train_time:111660ms step_avg:2233.20ms
+step:100/20000 train_loss:3.7501 train_time:223343ms step_avg:2233.43ms
+step:150/20000 train_loss:3.4616 train_time:335147ms step_avg:2234.31ms
+step:200/20000 train_loss:3.2134 train_time:449186ms step_avg:2245.93ms
+step:200/20000 val_loss:3.2430 val_bpb:1.9207 train_time:449400ms step_avg:2247.00ms
+step:250/20000 train_loss:3.1838 train_time:561102ms step_avg:2244.41ms
+step:268/20000 val_loss:3.1371 val_bpb:1.8580 train_time:601505ms step_avg:2244.42ms
+stopping_early: wallclock_cap train_time:601505ms step:268/20000
+peak memory allocated: 14794 MiB reserved: 15184 MiB
+Serialized model: 40219625 bytes
+Code size: 57071 bytes
+Total submission size: 40276696 bytes
+Serialized model int6+zstd: 2593204 bytes (payload:11272320 raw_torch:11294030 payload_ratio:3.57x)
+Total submission size int6+zstd: 2650275 bytes
+final_int6+zstd_roundtrip val_loss:3.9841 val_bpb:2.3596 eval_time:715807ms
+final_int6+zstd_roundtrip_exact val_loss:3.98410254 val_bpb:2.35960994

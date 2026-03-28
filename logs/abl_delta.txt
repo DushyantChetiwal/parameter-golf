@@ -823,11 +823,9 @@ class GPT(nn.Module):
 
         self.delta_enabled = delta_enabled
         if delta_enabled:
-            dd = torch.zeros(self.num_effective_layers, model_dim, delta_rank, dtype=torch.float32)
-            for layer_i in range(self.num_effective_layers):
-                nn.init.orthogonal_(dd[layer_i])
-            dd.mul_(1e-4)
-            self.delta_down = nn.Parameter(dd)
+            self.delta_down = nn.Parameter(
+                torch.randn(self.num_effective_layers, model_dim, delta_rank, dtype=torch.float32) * 0.01
+            )
             self.delta_up = nn.Parameter(
                 torch.zeros(self.num_effective_layers, delta_rank, model_dim, dtype=torch.float32)
             )
@@ -1361,3 +1359,102 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+====================================================================================================
+Running Python 3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]
+Running PyTorch 2.9.1+cu128
+Wed Mar 25 16:43:21 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.09             Driver Version: 580.126.09     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A40                     On  |   00000000:52:00.0 Off |                    0 |
+|  0%   55C    P0             76W /  300W |     427MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+|   1  NVIDIA A40                     On  |   00000000:D5:00.0 Off |                    0 |
+|  0%   56C    P0             90W /  300W |     427MiB /  46068MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A           34810      C   /usr/local/bin/python                   418MiB |
+|    1   N/A  N/A           34811      C   /usr/local/bin/python                   418MiB |
++-----------------------------------------------------------------------------------------+
+
+====================================================================================================
+val_bpb:enabled tokenizer_kind=sentencepiece tokenizer_path=./data/tokenizers/fineweb_1024_bpe.model
+train_loader:dataset:fineweb10B_sp1024 train_shards:80
+val_loader:shards pattern=./data/datasets/fineweb10B_sp1024/fineweb_val_*.bin tokens:62021632
+model_params:10083360
+architecture:shared_blocks num_unique_blocks:4 num_loops:3 effective_layers:12
+world_size:2 grad_accum_steps:4
+sdp_backends:cudnn=False flash=True mem_efficient=False math=False
+attention_mode:gqa num_heads:8 num_kv_heads:4
+tie_embeddings:True embed_lr:0.05 head_lr:0.0 matrix_lr:0.04 scalar_lr:0.04
+train_batch_tokens:524288 train_seq_len:1024 iterations:20000 warmup_steps:20 max_wallclock_seconds:600.000
+qat_enabled:True qat_int6:True use_zstd:True fp16_embed:True
+trigram_enabled:False trigram_buckets:4096 trigram_dim:128
+delta_enabled:True delta_rank:8
+value_residual:False
+adaptive_quant:False ttt_enabled:False normuon:False
+seed:1337
+warmup_step:1/20
+warmup_step:2/20
+warmup_step:3/20
+warmup_step:4/20
+warmup_step:5/20
+warmup_step:6/20
+warmup_step:7/20
+warmup_step:8/20
+warmup_step:9/20
+warmup_step:10/20
+warmup_step:11/20
+warmup_step:12/20
+warmup_step:13/20
+warmup_step:14/20
+warmup_step:15/20
+warmup_step:16/20
+warmup_step:17/20
+warmup_step:18/20
+warmup_step:19/20
+warmup_step:20/20
+step:0/20000 val_loss:6.9351 val_bpb:4.1073 train_time:0ms step_avg:0.02ms
+step:1/20000 train_loss:6.9340 train_time:1134ms step_avg:1134.17ms
+step:2/20000 train_loss:14.2885 train_time:2315ms step_avg:1157.44ms
+step:3/20000 train_loss:9.5820 train_time:3540ms step_avg:1179.95ms
+step:4/20000 train_loss:8.6576 train_time:4762ms step_avg:1190.44ms
+step:5/20000 train_loss:8.2046 train_time:6001ms step_avg:1200.17ms
+step:6/20000 train_loss:8.7861 train_time:7227ms step_avg:1204.47ms
+step:7/20000 train_loss:8.7455 train_time:8451ms step_avg:1207.31ms
+step:8/20000 train_loss:30.8405 train_time:9697ms step_avg:1212.14ms
+step:9/20000 train_loss:11.5155 train_time:10925ms step_avg:1213.85ms
+step:10/20000 train_loss:9.9061 train_time:12151ms step_avg:1215.05ms
+step:50/20000 train_loss:6.2373 train_time:61060ms step_avg:1221.19ms
+step:100/20000 train_loss:6.4725 train_time:122266ms step_avg:1222.66ms
+step:150/20000 train_loss:6.0210 train_time:183461ms step_avg:1223.07ms
+step:200/20000 train_loss:6.0301 train_time:246894ms step_avg:1234.47ms
+step:200/20000 val_loss:6.0302 val_bpb:3.5714 train_time:247048ms step_avg:1235.24ms
+step:250/20000 train_loss:6.0018 train_time:307999ms step_avg:1232.00ms
+step:300/20000 train_loss:5.9989 train_time:369058ms step_avg:1230.19ms
+step:350/20000 train_loss:5.9894 train_time:430125ms step_avg:1228.93ms
+step:400/20000 train_loss:5.9988 train_time:491640ms step_avg:1229.10ms
+step:400/20000 val_loss:6.0064 val_bpb:3.5574 train_time:491749ms step_avg:1229.37ms
+step:450/20000 train_loss:6.9312 train_time:552564ms step_avg:1227.92ms
+step:490/20000 val_loss:6.9314 val_bpb:4.1052 train_time:600446ms step_avg:1225.40ms
+stopping_early: wallclock_cap train_time:600446ms step:490/20000
+peak memory allocated: 15298 MiB reserved: 15684 MiB
+Serialized model: 39105321 bytes
+Code size: 56952 bytes
+Total submission size: 39162273 bytes
+Serialized model int6+zstd: 2648193 bytes (payload:10805376 raw_torch:10826833 payload_ratio:3.62x)
+Total submission size int6+zstd: 2705145 bytes
+final_int6+zstd_roundtrip val_loss:6.0377 val_bpb:3.5759 eval_time:44892ms
+final_int6+zstd_roundtrip_exact val_loss:6.03771923 val_bpb:3.57587742
