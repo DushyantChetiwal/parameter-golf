@@ -2,6 +2,7 @@ import modal
 import subprocess
 import os
 import glob
+from datetime import datetime
 
 app = modal.App("parameter-golf-multigpu")
 data_volume = modal.Volume.from_name("fineweb-data")
@@ -26,14 +27,16 @@ def run_distributed():
     env["TOKENIZER_PATH"] = "/cloud_data/data/tokenizers/fineweb_1024_bpe.model"
     
     env["PYTHONUNBUFFERED"] = "1"
+    env["TORCH_LOGS"] = "+dynamo,recompiles,graph_breaks"
 
     print("Launching torchrun across 2x A100s with persistent dataset attached...")
-    subprocess.run([
-        "torchrun", 
-        "--standalone", 
-        "--nproc_per_node=2", 
-        "records/track_10min_16mb/2026-03-27_Annealed_Muon_1.58bit/train_gpt.py"
-    ], env=env, check=True)
+    with open("dynamo_logs.txt", "w", encoding="utf-8") as f:
+        subprocess.run([
+            "torchrun", 
+            "--standalone", 
+            "--nproc_per_node=2", 
+            "records/track_10min_16mb/2026-03-27_Annealed_Muon_1.58bit/train_gpt.py"
+        ], env=env, check=True, stdout=f, stderr=subprocess.STDOUT)
 
     # --- HARVEST PHASE: Grab the files before the container dies ---
     print("Training complete. Harvesting artifacts...")
@@ -44,7 +47,13 @@ def run_distributed():
         with open("final_model.int8.ptz", "rb") as f:
             artifacts["model_ptz"] = f.read()
             
-    # 2. Grab the newest log file
+            
+    # 2. Grab the dynamo/torchrun output logs
+    if os.path.exists("dynamo_logs.txt"):
+        with open("dynamo_logs.txt", "r", encoding="utf-8") as f:
+            artifacts["dynamo_logs"] = f.read()
+            
+    # 3. Grab the newest log file
     log_files = glob.glob("logs/*.txt")
     if log_files:
         latest_log = max(log_files, key=os.path.getctime)
@@ -64,11 +73,18 @@ def main():
     
     print("\n--- RUN FINISHED. SAVING ARTIFACTS LOCALLY ---")
     
+    if "dynamo_logs" in artifacts:
+        os.makedirs("cloud_logs", exist_ok=True)
+        log_path = f"cloud_logs/dynamo_logs_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt"
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(artifacts["dynamo_logs"])
+        print(f"✅ Saved full dynamo logs to: ./{log_path}")
+
     if "run_log" in artifacts:
         os.makedirs("cloud_logs", exist_ok=True)
-        with open("cloud_logs/latest_run.txt", "w", encoding="utf-8") as f:
+        with open(f"cloud_logs/run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt", "w", encoding="utf-8") as f:
             f.write(artifacts["run_log"])
-        print("✅ Saved logs to: ./cloud_logs/latest_run.txt")
+        print(f"✅ Saved logs to: ./cloud_logs/run_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.txt")
         
     if "model_ptz" in artifacts:
         with open("final_model.int8.ptz", "wb") as f:

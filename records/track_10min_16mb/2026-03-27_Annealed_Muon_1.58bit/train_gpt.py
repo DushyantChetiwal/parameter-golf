@@ -1,6 +1,7 @@
 """
 Annealed-Muon 1.58-bit model utilizing Grouped Parameter Tying
 Compliant with the 10-minute / 16MB Parameter Golf Constraints.
+Featuring Dynamic Hardware Self-Calibration and Dual-Clock Annealing.
 """
 
 from __future__ import annotations
@@ -39,13 +40,15 @@ class Hyperparameters:
     seed = int(os.environ.get("SEED", 1337))
 
     val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
+    
+    # These are dynamically overwritten by the Self-Calibration Brain
     val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 100))
     train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 20))
+    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 100))
 
-    # Iterations act only as a safety max now; annealing is slaved to the clock.
     iterations = int(os.environ.get("ITERATIONS", 3000))
     warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 0))
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 20))
+    warmup_steps = int(os.environ.get("WARMUP_STEPS", 5)) # Dropped for calibration
     train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 262_144))
     train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
     max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
@@ -54,8 +57,8 @@ class Hyperparameters:
     vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
     num_layers = int(os.environ.get("NUM_LAYERS", 12)) 
     
-    # NOTE: Adjust these up or down slightly to perfectly hit your 15.8MB limit!
-    num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 4)) 
+    # WAKE-UP & FILE SIZE FIXES
+    num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 1)) # Passes 16MB limit
     model_dim = int(os.environ.get("MODEL_DIM", 2048))
     num_heads = int(os.environ.get("NUM_HEADS", 16))
     mlp_mult = int(os.environ.get("MLP_MULT", 4))
@@ -65,16 +68,20 @@ class Hyperparameters:
     rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
     logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
 
-    embed_lr = float(os.environ.get("EMBED_LR", 0.6))
+    # REDUCED EMBEDDING LR TO PREVENT GRADIENT EXPLOSIONS
+    embed_lr = float(os.environ.get("EMBED_LR", 0.05))
     head_lr = float(os.environ.get("HEAD_LR", 0.008))
     tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
     tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
+    
+    # STABLE MATRIX LR
     matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
     scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.95))
+    
+    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.90)) # Slightly thinner momentum
     muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
     muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 100))
+    
     beta1 = float(os.environ.get("BETA1", 0.9))
     beta2 = float(os.environ.get("BETA2", 0.95))
     adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
@@ -364,7 +371,7 @@ class GPT(nn.Module):
 
 
 # -----------------------------
-# DIAGNOSTIC SNIFFER
+# UPGRADED DIAGNOSTIC SNIFFER
 # -----------------------------
 @torch.no_grad()
 def measure_quantization_health(model: nn.Module) -> tuple[float, float]:
@@ -398,9 +405,9 @@ def measure_quantization_health(model: nn.Module) -> tuple[float, float]:
 # -----------------------------
 
 def main() -> None:
+    absolute_t0 = time.perf_counter() # ABSOLUTE CLOCK START
+    
     global zeropower_via_newtonschulz5
-    absolute_t0 = time.perf_counter()
-
     code = Path(__file__).read_text(encoding="utf-8")
     args = Hyperparameters()
     zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
@@ -440,10 +447,10 @@ def main() -> None:
             if (param.ndim < 2 or "scale" in name or "norm" in name) and param.dtype != torch.float32:
                 param.data = param.data.float()
                 
-# Laser-target the compiler ONLY on the transformer blocks to save 10+ minutes of compile time
-    for i in range(len(base_model.blocks)):
-        base_model.blocks[i] = torch.compile(base_model.blocks[i], fullgraph=True, dynamic=False)
-        
+    # --- COMPILER BYPASSED FOR EAGER MODE SPEED ---
+    # for i in range(len(base_model.blocks)):
+    #     base_model.blocks[i] = torch.compile(base_model.blocks[i], fullgraph=True, dynamic=False)
+    
     model: nn.Module = DDP(base_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else base_model
 
     matrix_params, scalar_params = [], []
@@ -463,6 +470,10 @@ def main() -> None:
     train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
     max_wallclock_ms = 1000.0 * args.max_wallclock_seconds if args.max_wallclock_seconds > 0 else None
 
+    # --- THE COMPREHENSIVE SELF-CALIBRATION BRAIN ---
+    args.warmup_steps = 5 
+    
+    t_warmup_start = time.perf_counter()
     if args.warmup_steps > 0:
         model.train()
         for _ in range(args.warmup_steps):
@@ -475,26 +486,64 @@ def main() -> None:
             for opt in optimizers: opt.step()
         train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
 
-    training_time_ms, t0, step = 1000.0 * (time.perf_counter() - absolute_t0), time.perf_counter(), 0
+    warmup_time_ms = 1000.0 * (time.perf_counter() - t_warmup_start)
+    avg_step_ms = warmup_time_ms / max(1, args.warmup_steps)
+    time_elapsed_ms = 1000.0 * (time.perf_counter() - absolute_t0)
+    
+    # ----------------------------------------------------
+    # NEW: Synchronize the calibration timings from Rank 0!
+    # ----------------------------------------------------
+    if distributed:
+        sync_metrics = torch.tensor([time_elapsed_ms, avg_step_ms], dtype=torch.float32, device=device)
+        dist.broadcast(sync_metrics, src=0)
+        time_elapsed_ms, avg_step_ms = sync_metrics.tolist()
+        
+    # 1. Dynamic Safety Buffer
+    safety_buffer_ms = (avg_step_ms * 2.5) + 5000.0 
+    time_left_ms = (args.max_wallclock_seconds * 1000.0) - time_elapsed_ms - safety_buffer_ms
+    
+    projected_main_steps = max(1, int(time_left_ms / avg_step_ms))
+    # 2. Dynamic Muon Momentum
+    args.muon_momentum_warmup_steps = max(2, int(projected_main_steps * 0.10))
+    
+    # 3. Dynamic Validation
+    args.val_loss_every = max(1, projected_main_steps // 3)
+    
+    # 4. Dynamic Logging
+    args.train_log_every = max(1, projected_main_steps // 20)
+    
+    log0("\n" + "="*50)
+    log0(f"🚀 HARDWARE AUTO-CALIBRATION COMPLETE")
+    log0(f"   - Hardware Speed:    {avg_step_ms:.0f} ms/step")
+    log0(f"   - Projected Steps:   {projected_main_steps} steps remaining")
+    log0(f"   - Muon Warmup Phase: {args.muon_momentum_warmup_steps} steps")
+    log0(f"   - Validation Freq:   Every {args.val_loss_every} steps")
+    log0(f"   - Sniffer Log Freq:  Every {args.train_log_every} steps")
+    log0(f"   - I/O Safety Buffer: {safety_buffer_ms/1000.0:.1f} seconds")
+    log0("="*50 + "\n")
+    
+    # --- CLOCK SEPARATION ---
+    loop_max_ms = time_left_ms 
+    loop_start_t0 = time.perf_counter()
+    
+    step = 0
     stop_after_step = None
     
     while True:
         last_step = step == args.iterations or (stop_after_step is not None and step >= stop_after_step)
-        if last_step or (args.val_loss_every > 0 and step % args.val_loss_every == 0):
+        if last_step or (args.val_loss_every > 0 and step > 0 and step % args.val_loss_every == 0):
             torch.cuda.synchronize()
-            training_time_ms += 1000.0 * (time.perf_counter() - t0)
             val_loss, val_bpb = eval_val(args, model, rank, world_size, device, grad_accum_steps, val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut)
-            log0(f"step:{step} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f} train_time:{training_time_ms:.0f}ms")
+            log0(f"step:{step} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f}")
             torch.cuda.synchronize()
-            t0 = time.perf_counter()
+            # Do not reset t0 here, we use absolute loops now
 
         if last_step: break
 
-        # --- TIME-DOMAIN ANNEALING (Hardware Agnostic) ---
-        elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
-        effective_max_ms = max_wallclock_ms - 5000.0 if max_wallclock_ms else 600000.0
+        # --- TIME-DOMAIN ANNEALING (Perfectly Scaled to Remaining Time) ---
+        loop_elapsed_ms = 1000.0 * (time.perf_counter() - loop_start_t0)
         
-        fraction = min(elapsed_ms / effective_max_ms, 1.0)
+        fraction = min(loop_elapsed_ms / loop_max_ms, 1.0)
         cos_fraction = 0.5 * (1 + math.cos(math.pi * fraction))
         
         tau_val = 0.01 + (1.0 - 0.01) * cos_fraction
@@ -525,22 +574,24 @@ def main() -> None:
                 if isinstance(module, AnnealedBitLinear): module.weight_latent.clamp_(-bound, bound)
 
         step += 1
-        approx_time = training_time_ms + 1000.0 * (time.perf_counter() - t0)
-        reached_cap = max_wallclock_ms is not None and approx_time >= max_wallclock_ms
+        
+        # --- THE ASSASSIN CLOCK (Kill Switch) ---
+        total_absolute_ms = 1000.0 * (time.perf_counter() - absolute_t0)
+        
+        reached_cap = max_wallclock_ms is not None and total_absolute_ms >= (max_wallclock_ms * 1000.0 - safety_buffer_ms)
         if distributed and max_wallclock_ms is not None:
             cap_tensor = torch.tensor([1 if reached_cap else 0], dtype=torch.int32, device=device)
             dist.all_reduce(cap_tensor, op=dist.ReduceOp.MAX)
             reached_cap = cap_tensor.item() > 0
 
         if stop_after_step is None and reached_cap:
-            log0(f"stopping_early: cap reached at step {step}")
+            log0(f"stopping_early: cap reached at step {step} (Absolute time: {total_absolute_ms/1000.0:.1f}s)")
             stop_after_step = step 
         
         if args.train_log_every > 0 and (step <= 10 or step % args.train_log_every == 0):
-            # --- FIRE THE SNIFFER ---
             zero_pct, edge_pct = measure_quantization_health(base_model)
             log0(f"step:{step} train_loss:{train_loss.item():.4f} "
-                 f"step_avg:{approx_time/max(step,1):.0f}ms "
+                 f"step_avg:{loop_elapsed_ms/max(step,1):.0f}ms "
                  f"[Zero: {zero_pct:.1f}% | Edges: {edge_pct:.1f}%]")
 
     # -----------------------------
