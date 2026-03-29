@@ -251,9 +251,15 @@ class AnnealedBitLinear(nn.Module):
 
     def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
         tau_safe = tau.clamp(min=1e-4)
+        
+        # 1. The Soft Forward Pass (Naturally bounded between -1.0 and 1.0)
         W_active_tanh = 0.5 * (torch.tanh((self.weight_latent + 0.5) / tau_safe) + torch.tanh((self.weight_latent - 0.5) / tau_safe))
-        W_active_snap = (self.weight_latent.clamp(-1.0, 1.0).round() - self.weight_latent).detach() + self.weight_latent
-        return F.linear(x, torch.where(step_fraction > 0.95, W_active_snap, W_active_tanh).to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
+        
+        # 2. The Continuous Straight-Through Estimator (STE)
+        # Interpolates smoothly from soft-math to hard-integers without triggering graph breaks.
+        W_quant = W_active_tanh + (step_fraction * (W_active_tanh.round() - W_active_tanh)).detach()
+        
+        return F.linear(x, W_quant.to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, base: float = 10000.0, max_seq_len: int = 8192):
@@ -278,7 +284,6 @@ class CausalSelfAttention(nn.Module):
         self.c_k = AnnealedBitLinear(dim, num_kv_heads * self.head_dim, bias=False)
         self.c_v = AnnealedBitLinear(dim, num_kv_heads * self.head_dim, bias=False)
         self.proj = AnnealedBitLinear(dim, dim, bias=False)
-        self.proj._zero_init = True
         self.q_gain = nn.Parameter(torch.full((num_heads,), qk_gain_init, dtype=torch.float32))
         self.rotary = Rotary(self.head_dim, base=rope_base)
 
@@ -301,7 +306,6 @@ class MLP(nn.Module):
         super().__init__()
         self.fc = AnnealedBitLinear(dim, mlp_mult * dim, bias=False)
         self.proj = AnnealedBitLinear(mlp_mult * dim, dim, bias=False)
-        self.proj._zero_init = True
 
     def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
         return self.proj(torch.relu(self.fc(x, tau, step_fraction)).square(), tau, step_fraction)
@@ -451,6 +455,10 @@ def main() -> None:
     # for i in range(len(base_model.blocks)):
     #     base_model.blocks[i] = torch.compile(base_model.blocks[i], fullgraph=True, dynamic=False)
     
+    # 1. Compile the base_model BEFORE wrapping in DDP (This fixes the 3-minute submod fracturing)
+    base_model = torch.compile(base_model, fullgraph=False)
+    
+    # 2. Wrap in DDP
     model: nn.Module = DDP(base_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else base_model
 
     matrix_params, scalar_params = [], []
@@ -473,9 +481,21 @@ def main() -> None:
     # --- THE COMPREHENSIVE SELF-CALIBRATION BRAIN ---
     args.warmup_steps = 5 
     
-    t_warmup_start = time.perf_counter()
     if args.warmup_steps > 0:
         model.train()
+        
+        # 1. THE PRIMER STEP (This absorbs the 74-second compile tax)
+        for opt in optimizers: opt.zero_grad(set_to_none=True)
+        for micro_step in range(grad_accum_steps):
+            if distributed: model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+            x, y = train_loader.next_batch(args.train_batch_tokens, args.train_seq_len, grad_accum_steps)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                (model(x, y, tau=torch.tensor([1.0], device=device), step_fraction=torch.tensor([0.0], device=device)) * (1.0/grad_accum_steps)).backward()
+        for opt in optimizers: opt.step()
+        torch.cuda.synchronize() # Wait for the compiler to finish writing the GPU kernels
+        
+        # 2. THE TRUE CALIBRATION RUN (Now we start the stopwatch)
+        t_warmup_start = time.perf_counter()
         for _ in range(args.warmup_steps):
             for opt in optimizers: opt.zero_grad(set_to_none=True)
             for micro_step in range(grad_accum_steps):
@@ -484,6 +504,7 @@ def main() -> None:
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
                     (model(x, y, tau=torch.tensor([1.0], device=device), step_fraction=torch.tensor([0.0], device=device)) * (1.0/grad_accum_steps)).backward()
             for opt in optimizers: opt.step()
+        torch.cuda.synchronize()
         train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
 
     warmup_time_ms = 1000.0 * (time.perf_counter() - t_warmup_start)
@@ -524,7 +545,10 @@ def main() -> None:
     
     # --- CLOCK SEPARATION ---
     loop_max_ms = time_left_ms 
-    loop_start_t0 = time.perf_counter()
+    
+    # 1. Initialize our accumulators
+    training_time_ms = 0.0 
+    t0 = time.perf_counter() 
     
     step = 0
     stop_after_step = None
@@ -533,15 +557,22 @@ def main() -> None:
         last_step = step == args.iterations or (stop_after_step is not None and step >= stop_after_step)
         if last_step or (args.val_loss_every > 0 and step > 0 and step % args.val_loss_every == 0):
             torch.cuda.synchronize()
+            
+            # 2. PAUSE THE CLOCK: Add the time spent training so far to the accumulator
+            training_time_ms += 1000.0 * (time.perf_counter() - t0)
+            
             val_loss, val_bpb = eval_val(args, model, rank, world_size, device, grad_accum_steps, val_tokens, base_bytes_lut, has_leading_space_lut, is_boundary_token_lut)
             log0(f"step:{step} val_loss:{val_loss:.4f} val_bpb:{val_bpb:.4f}")
+            
+            # 3. RESTART THE CLOCK: Reset t0 after validation finishes
             torch.cuda.synchronize()
-            # Do not reset t0 here, we use absolute loops now
+            t0 = time.perf_counter()
 
         if last_step: break
 
         # --- TIME-DOMAIN ANNEALING (Perfectly Scaled to Remaining Time) ---
-        loop_elapsed_ms = 1000.0 * (time.perf_counter() - loop_start_t0)
+        # 4. Use the accumulated training time to drive the math
+        loop_elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         
         fraction = min(loop_elapsed_ms / loop_max_ms, 1.0)
         cos_fraction = 0.5 * (1 + math.cos(math.pi * fraction))
@@ -578,7 +609,7 @@ def main() -> None:
         # --- THE ASSASSIN CLOCK (Kill Switch) ---
         total_absolute_ms = 1000.0 * (time.perf_counter() - absolute_t0)
         
-        reached_cap = max_wallclock_ms is not None and total_absolute_ms >= (max_wallclock_ms * 1000.0 - safety_buffer_ms)
+        reached_cap = max_wallclock_ms is not None and total_absolute_ms >= (max_wallclock_ms - safety_buffer_ms)
         if distributed and max_wallclock_ms is not None:
             cap_tensor = torch.tensor([1 if reached_cap else 0], dtype=torch.int32, device=device)
             dist.all_reduce(cap_tensor, op=dist.ReduceOp.MAX)
