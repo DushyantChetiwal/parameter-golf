@@ -32,61 +32,87 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 # -----------------------------
 
 class Hyperparameters:
-    data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
-    train_files = os.path.join(data_path, "fineweb_train_*.bin")
-    val_files = os.path.join(data_path, "fineweb_val_*.bin")
-    tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
-    run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
-    seed = int(os.environ.get("SEED", 1337))
+    def __init__(self):
+        # -----------------------------
+        # 1. BASE CONFIGURATION (A100 Defaults)
+        # -----------------------------
+        self.data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
+        self.train_files = os.path.join(self.data_path, "fineweb_train_*.bin")
+        self.val_files = os.path.join(self.data_path, "fineweb_val_*.bin")
+        self.tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
+        self.run_id = os.environ.get("RUN_ID", str(uuid.uuid4()))
+        self.seed = int(os.environ.get("SEED", 1337))
 
-    val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
-    
-    # These are dynamically overwritten by the Self-Calibration Brain
-    val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 100))
-    train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 20))
-    muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 100))
+        self.val_batch_size = int(os.environ.get("VAL_BATCH_SIZE", 524_288))
+        self.val_loss_every = int(os.environ.get("VAL_LOSS_EVERY", 100))
+        self.train_log_every = int(os.environ.get("TRAIN_LOG_EVERY", 20))
+        self.muon_momentum_warmup_steps = int(os.environ.get("MUON_MOMENTUM_WARMUP_STEPS", 100))
 
-    iterations = int(os.environ.get("ITERATIONS", 3000))
-    warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 0))
-    warmup_steps = int(os.environ.get("WARMUP_STEPS", 5)) # Dropped for calibration
-    train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 262_144))
-    train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
-    max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
-    qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
+        self.iterations = int(os.environ.get("ITERATIONS", 3000))
+        self.warmdown_iters = int(os.environ.get("WARMDOWN_ITERS", 0))
+        self.warmup_steps = int(os.environ.get("WARMUP_STEPS", 5)) 
+        self.train_batch_tokens = int(os.environ.get("TRAIN_BATCH_TOKENS", 262_144))
+        self.train_seq_len = int(os.environ.get("TRAIN_SEQ_LEN", 1024))
+        self.max_wallclock_seconds = float(os.environ.get("MAX_WALLCLOCK_SECONDS", 600.0))
+        self.qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
-    vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-    num_layers = int(os.environ.get("NUM_LAYERS", 12)) 
-    
-    # WAKE-UP & FILE SIZE FIXES
-    num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 1)) # Passes 16MB limit
-    model_dim = int(os.environ.get("MODEL_DIM", 2048))
-    num_heads = int(os.environ.get("NUM_HEADS", 16))
-    mlp_mult = int(os.environ.get("MLP_MULT", 4))
-    
-    num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 8))
-    tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
-    rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
-    logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
+        self.vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
+        self.num_layers = int(os.environ.get("NUM_LAYERS", 12)) 
+        self.num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 12))
+        self.model_dim = int(os.environ.get("MODEL_DIM", 1536))
+        self.num_heads = int(os.environ.get("NUM_HEADS", 16))
+        self.mlp_mult = int(os.environ.get("MLP_MULT", 4))
+        
+        self.num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 8))
+        self.tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
+        self.rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
+        self.logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
 
-    # REDUCED EMBEDDING LR TO PREVENT GRADIENT EXPLOSIONS
-    embed_lr = float(os.environ.get("EMBED_LR", 0.05))
-    head_lr = float(os.environ.get("HEAD_LR", 0.008))
-    tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
-    tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
-    
-    # STABLE MATRIX LR
-    matrix_lr = float(os.environ.get("MATRIX_LR", 0.04))
-    scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
-    
-    muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.90)) # Slightly thinner momentum
-    muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
-    muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
-    
-    beta1 = float(os.environ.get("BETA1", 0.9))
-    beta2 = float(os.environ.get("BETA2", 0.95))
-    adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
-    grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
-    latent_clip_scale = float(os.environ.get("LATENT_CLIP_SCALE", 3.0))
+        self.embed_lr = float(os.environ.get("EMBED_LR", 0.05))
+        self.head_lr = float(os.environ.get("HEAD_LR", 0.008))
+        self.tied_embed_lr = float(os.environ.get("TIED_EMBED_LR", 0.05))
+        self.tied_embed_init_std = float(os.environ.get("TIED_EMBED_INIT_STD", 0.005))
+        
+        self.matrix_lr = float(os.environ.get("MATRIX_LR", 0.4))
+        self.scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
+        
+        self.muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.90)) 
+        self.muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
+        self.muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
+        
+        self.beta1 = float(os.environ.get("BETA1", 0.9))
+        self.beta2 = float(os.environ.get("BETA2", 0.95))
+        self.adam_eps = float(os.environ.get("ADAM_EPS", 1e-8))
+        self.grad_clip_norm = float(os.environ.get("GRAD_CLIP_NORM", 0.0))
+        self.latent_clip_scale = float(os.environ.get("LATENT_CLIP_SCALE", 3.0))
+
+        # -----------------------------
+        # 2. 🚀 THE HARDWARE AUTO-SCALER
+        # -----------------------------
+        if torch.cuda.is_available():
+            gpu_capability = torch.cuda.get_device_capability(0)[0] # 8 = Ampere, 9 = Hopper
+            world_size = int(os.environ.get("WORLD_SIZE", "1"))
+            
+            # Trigger Criteria: Is this an H100 (Capability 9+) OR a massive 8x GPU cluster?
+            if gpu_capability >= 9 or world_size >= 8:
+                
+                # Quadruple the batch sizes to stop SM starvation
+                # (We check `not in os.environ` so you can still manually override if you want)
+                if "TRAIN_BATCH_TOKENS" not in os.environ:
+                    self.train_batch_tokens = 1_048_576
+                if "VAL_BATCH_SIZE" not in os.environ:
+                    self.val_batch_size = 1_048_576
+                    
+                # Double the learning rates to obey the Batch Size Scaling Law
+                if "MATRIX_LR" not in os.environ:
+                    self.matrix_lr = 0.8
+                    self.scalar_lr = 0.08
+                    self.embed_lr = 0.10
+                    self.tied_embed_lr = 0.10
+                    
+                # Squeeze more precision out of Muon since H100 compute is essentially free
+                if "MUON_BACKEND_STEPS" not in os.environ:
+                    self.muon_backend_steps = 7
 
 # -----------------------------
 # MUON OPTIMIZER & EVALUATION
@@ -244,22 +270,25 @@ class AnnealedBitLinear(nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool = False):
         super().__init__()
         self.weight_latent = nn.Parameter(torch.empty(out_features, in_features))
-        nn.init.normal_(self.weight_latent, mean=0.0, std=0.02)
+        
+        # FIX 1: Widen the initialization so weights aren't born inside the 'Zero' deadzone!
+        nn.init.normal_(self.weight_latent, mean=0.0, std=0.2) 
+        
         if bias: self.bias = nn.Parameter(torch.zeros(out_features))
         else: self.register_parameter('bias', None)
         self._zero_init = False
 
     def forward(self, x: Tensor, tau: Tensor, step_fraction: Tensor) -> Tensor:
-        tau_safe = tau.clamp(min=1e-4)
+        # FIX 2: The mathematically pure, graph-friendly Linear STE. 
+        # No tanh dead-zones. No clamp explosions.
         
-        # 1. The Soft Forward Pass (Naturally bounded between -1.0 and 1.0)
-        W_active_tanh = 0.5 * (torch.tanh((self.weight_latent + 0.5) / tau_safe) + torch.tanh((self.weight_latent - 0.5) / tau_safe))
+        # 1. The pure ternary target
+        w_quant = self.weight_latent.round().clamp(-1.0, 1.0)
         
-        # 2. The Continuous Straight-Through Estimator (STE)
-        # Interpolates smoothly from soft-math to hard-integers without triggering graph breaks.
-        W_quant = W_active_tanh + (step_fraction * (W_active_tanh.round() - W_active_tanh)).detach()
+        # 2. Smooth linear interpolation from soft-weights to hard-ternary
+        W_active = self.weight_latent + (step_fraction * (w_quant - self.weight_latent)).detach()
         
-        return F.linear(x, W_quant.to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
+        return F.linear(x, W_active.to(x.dtype), self.bias.to(x.dtype) if self.bias is not None else None)
 
 class Rotary(nn.Module):
     def __init__(self, dim: int, base: float = 10000.0, max_seq_len: int = 8192):
@@ -336,12 +365,19 @@ class GPT(nn.Module):
         if self.lm_head is not None: self.lm_head._zero_init = True
             
         if self.tie_embeddings: nn.init.normal_(self.tok_emb.weight, mean=0.0, std=tied_embed_init_std)
+        
         for name, module in self.named_modules():
             if isinstance(module, (nn.Linear, CastedLinear, AnnealedBitLinear)):
                 w = getattr(module, 'weight_latent', getattr(module, 'weight', None))
                 if w is not None:
-                    if getattr(module, "_zero_init", False): nn.init.zeros_(w)
+                    if getattr(module, "_zero_init", False): 
+                        nn.init.zeros_(w)
+                    elif isinstance(module, AnnealedBitLinear):
+                        # FIX: Protect the 1.58-bit layers! Force the wide distribution
+                        # so they are born outside the ternary dead-zones.
+                        nn.init.normal_(w, mean=0.0, std=0.6)
                     else:
+                        # Only apply the standard GPT orthogonal scaling to standard linear layers (like lm_head)
                         nn.init.orthogonal_(w)
                         if ".proj" in name:
                             with torch.no_grad(): w.mul_(1.0 / math.sqrt(2 * num_layers))
