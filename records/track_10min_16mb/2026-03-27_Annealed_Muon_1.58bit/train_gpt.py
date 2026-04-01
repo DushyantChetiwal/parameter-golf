@@ -54,13 +54,13 @@ class Hyperparameters:
         self.qk_gain_init = float(os.environ.get("QK_GAIN_INIT", 1.5))
 
         self.vocab_size = int(os.environ.get("VOCAB_SIZE", 1024))
-        self.num_layers = int(os.environ.get("NUM_LAYERS", 12))
-        self.num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 3))
-        self.model_dim = int(os.environ.get("MODEL_DIM", 1536))
-        self.num_heads = int(os.environ.get("NUM_HEADS", 16))
-        self.mlp_mult = int(os.environ.get("MLP_MULT", 3))
+        self.num_layers = int(os.environ.get("NUM_LAYERS", 10))
+        self.num_unique_blocks = int(os.environ.get("NUM_UNIQUE_BLOCKS", 10))
+        self.model_dim = int(os.environ.get("MODEL_DIM", 768))
+        self.num_heads = int(os.environ.get("NUM_HEADS", 8))
+        self.mlp_mult = int(os.environ.get("MLP_MULT", 4))
 
-        self.num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 8))
+        self.num_kv_heads = int(os.environ.get("NUM_KV_HEADS", 4))
         self.tie_embeddings = bool(int(os.environ.get("TIE_EMBEDDINGS", "1")))
         self.rope_base = float(os.environ.get("ROPE_BASE", 10000.0))
         self.logit_softcap = float(os.environ.get("LOGIT_SOFTCAP", 30.0))
@@ -74,7 +74,7 @@ class Hyperparameters:
         self.scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
 
         self.muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.90))
-        self.muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
+        self.muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 3))
         self.muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
 
         self.beta1 = float(os.environ.get("BETA1", 0.9))
@@ -87,18 +87,9 @@ class Hyperparameters:
         self.ppm_enabled = bool(int(os.environ.get("PPM_ENABLED", "1")))
         self.ppm_alpha = float(os.environ.get("PPM_ALPHA", 0.95))
 
-        # Hardware Auto-Scaler
-        if torch.cuda.is_available():
-            gpu_capability = torch.cuda.get_device_capability(0)[0]
-            world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        self.bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 2048))
+        self.bigram_dim = int(os.environ.get("BIGRAM_DIM", 128))
 
-            if gpu_capability >= 9 or world_size >= 8:
-                if "TRAIN_BATCH_TOKENS" not in os.environ:
-                    self.train_batch_tokens = 1_048_576
-                if "VAL_BATCH_SIZE" not in os.environ:
-                    self.val_batch_size = 1_048_576
-                if "MUON_BACKEND_STEPS" not in os.environ:
-                    self.muon_backend_steps = 7
 
 # -----------------------------
 # MUON+ OPTIMIZER
@@ -418,6 +409,32 @@ class SmearGate(nn.Module):
         x_prev = torch.cat([torch.zeros_like(x[:, :1]), x[:, :-1]], dim=1)
         return (1.0 - g) * x + g * x_prev
 
+class BigramHashEmbedding(nn.Module):
+    def __init__(self, bigram_vocab_size: int, bigram_dim: int, model_dim: int):
+        super().__init__()
+        self.bigram_vocab_size = bigram_vocab_size
+        self.embed = nn.Embedding(bigram_vocab_size, bigram_dim)
+        nn.init.zeros_(self.embed.weight)
+        self.proj = CastedLinear(bigram_dim, model_dim, bias=False) if bigram_dim != model_dim else None
+        if self.proj is not None:
+            nn.init.zeros_(self.proj.weight)
+            self.proj._zero_init = True
+        self.scale = nn.Parameter(torch.tensor(0.05, dtype=torch.float32))
+
+    def bigram_hash(self, tokens: Tensor) -> Tensor:
+        t = tokens.to(torch.int32)
+        mod = self.bigram_vocab_size - 1
+        out = torch.empty_like(t)
+        out[..., 0] = mod
+        out[..., 1:] = torch.bitwise_xor(36313 * t[..., 1:], 27191 * t[..., :-1]) % mod
+        return out.long()
+
+    def forward(self, token_ids: Tensor) -> Tensor:
+        h = self.embed(self.bigram_hash(token_ids))
+        if self.proj is not None:
+            h = self.proj(h)
+        return h * self.scale.to(dtype=h.dtype)
+
 class Rotary(nn.Module):
     def __init__(self, dim: int, base: float = 10000.0, max_seq_len: int = 8192):
         super().__init__()
@@ -499,10 +516,12 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self, vocab_size: int, num_layers: int, num_unique_blocks: int, model_dim: int, num_heads: int,
                  num_kv_heads: int, mlp_mult: int, tie_embeddings: bool, tied_embed_init_std: float,
-                 logit_softcap: float, rope_base: float, qk_gain_init: float):
+                 logit_softcap: float, rope_base: float, qk_gain_init: float,
+                 bigram_vocab_size: int = 0, bigram_dim: int = 128):
         super().__init__()
         self.tie_embeddings, self.logit_softcap = tie_embeddings, logit_softcap
         self.tok_emb = nn.Embedding(vocab_size, model_dim)
+        self.bigram = BigramHashEmbedding(bigram_vocab_size, bigram_dim, model_dim) if bigram_vocab_size > 0 else None
         self.smear_gate = SmearGate(model_dim)
 
         self.num_encoder_layers = num_layers // 2
@@ -548,6 +567,8 @@ class GPT(nn.Module):
         if step_fraction is None: step_fraction = torch.tensor([1.0], device=input_ids.device, dtype=torch.float32)
 
         x = F.rms_norm(self.tok_emb(input_ids), (self.tok_emb.weight.size(-1),))
+        if self.bigram is not None:
+            x = x + self.bigram(input_ids)
         x = self.smear_gate(x)
         x0 = x
 
@@ -641,7 +662,8 @@ def main() -> None:
 
     base_model = GPT(args.vocab_size, args.num_layers, args.num_unique_blocks, args.model_dim, args.num_heads,
                      args.num_kv_heads, args.mlp_mult, args.tie_embeddings, args.tied_embed_init_std,
-                     args.logit_softcap, args.rope_base, args.qk_gain_init).to(device).bfloat16()
+                     args.logit_softcap, args.rope_base, args.qk_gain_init,
+                     bigram_vocab_size=args.bigram_vocab_size, bigram_dim=args.bigram_dim).to(device).bfloat16()
     for module in base_model.modules():
         if isinstance(module, (CastedLinear, AnnealedBitLinear)): module.float()
 
@@ -651,7 +673,8 @@ def main() -> None:
                 param.data = param.data.float()
 
     raw_model = base_model
-    base_model = torch.compile(base_model, fullgraph=False)
+    for i in range(len(base_model.blocks)):
+        base_model.blocks[i] = torch.compile(base_model.blocks[i], fullgraph=False)
     model: nn.Module = DDP(base_model, device_ids=[local_rank], broadcast_buffers=False) if distributed else base_model
 
     matrix_params, scalar_params = [], []
@@ -685,7 +708,7 @@ def main() -> None:
         clip_multipliers[bi] = 1.0 - 0.4 * mid_frac
 
     # --- SELF-CALIBRATION ---
-    t_warmup_start = time.perf_counter()
+    t_compile_start = time.perf_counter()
 
     if args.warmup_steps > 0:
         model.train()
@@ -699,6 +722,8 @@ def main() -> None:
                 (model(x, y, step_fraction=sf_zero) * (1.0 / grad_accum_steps)).backward()
         for opt in optimizers: opt.step()
         torch.cuda.synchronize()
+        compile_ms = 1000.0 * (time.perf_counter() - t_compile_start)
+        log0(f"Compilation (primer step): {compile_ms:.0f}ms")
 
         t_warmup_start = time.perf_counter()
         for _ in range(args.warmup_steps):
@@ -762,13 +787,12 @@ def main() -> None:
 
         if last_step: break
 
-        # --- TIME-BASED COSINE ANNEALING ---
+        # --- QUARTER-CIRCLE LR SCHEDULE ---
         loop_elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         fraction = min(loop_elapsed_ms / max(loop_max_ms, 1.0), 1.0)
-        cos_fraction = 0.5 * (1.0 + math.cos(math.pi * fraction))
-        scale = cos_fraction
-        step_frac_val = fraction
+        scale = math.sqrt(1.0 - fraction * fraction)
 
+        step_frac_val = fraction
         sf_t = torch.tensor([step_frac_val], device=device, dtype=torch.float32)
         # ---
 
@@ -860,7 +884,11 @@ def main() -> None:
 
         for sname, param in base_model.state_dict().items():
             if "weight_latent" not in sname:
-                packed_state_dict[sname] = param.detach().cpu()
+                p = param.detach().cpu()
+                if p.is_floating_point() and p.numel() > 1:
+                    packed_state_dict[sname] = p.to(torch.float8_e4m3fn)
+                else:
+                    packed_state_dict[sname] = p
 
         quant_buf = io.BytesIO()
         torch.save(packed_state_dict, quant_buf)
@@ -893,7 +921,10 @@ def main() -> None:
             w_ternary = unpack_base3_uint8(param, out_f, in_f, pad_len)
             dequant_state_dict[f"{prefix}.weight_latent"] = (w_ternary.float() * row_scale[:, None]).to(torch.bfloat16)
         elif not sname.endswith(".shape_info") and not sname.endswith(".row_scale"):
-            dequant_state_dict[sname] = param
+            if param.dtype == torch.float8_e4m3fn:
+                dequant_state_dict[sname] = param.to(torch.bfloat16)
+            else:
+                dequant_state_dict[sname] = param
 
     base_model.load_state_dict(dequant_state_dict, strict=False)
 
