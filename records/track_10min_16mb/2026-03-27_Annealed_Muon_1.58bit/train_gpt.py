@@ -6,6 +6,7 @@ Featuring cosine-annealed quantization, Muon+, XSA, U-Net skips, and surprise LR
 
 from __future__ import annotations
 
+import copy
 import glob
 import io
 import math
@@ -74,7 +75,7 @@ class Hyperparameters:
         self.scalar_lr = float(os.environ.get("SCALAR_LR", 0.04))
 
         self.muon_momentum = float(os.environ.get("MUON_MOMENTUM", 0.90))
-        self.muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 3))
+        self.muon_backend_steps = int(os.environ.get("MUON_BACKEND_STEPS", 5))
         self.muon_momentum_warmup_start = float(os.environ.get("MUON_MOMENTUM_WARMUP_START", 0.85))
 
         self.beta1 = float(os.environ.get("BETA1", 0.9))
@@ -87,7 +88,7 @@ class Hyperparameters:
         self.ppm_enabled = bool(int(os.environ.get("PPM_ENABLED", "1")))
         self.ppm_alpha = float(os.environ.get("PPM_ALPHA", 0.95))
 
-        self.bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 2048))
+        self.bigram_vocab_size = int(os.environ.get("BIGRAM_VOCAB_SIZE", 0))
         self.bigram_dim = int(os.environ.get("BIGRAM_DIM", 128))
 
 
@@ -388,12 +389,11 @@ class AnnealedBitLinear(nn.Module):
 
     def forward(self, x: Tensor, step_fraction: Tensor) -> Tensor:
         w = self.weight_latent
+        w_det = w.detach()
+        w_abs = w_det.abs()
 
-        scale = w.detach().abs().mean(dim=1, keepdim=True).clamp(min=1e-8)
-        threshold = 0.7 * scale
-        w_signs = torch.sign(w.detach())
-        w_mask = (w.detach().abs() > threshold).float()
-        w_quant = w_signs * w_mask * scale
+        scale = w_abs.mean(dim=1, keepdim=True).clamp(min=1e-8)
+        w_quant = torch.sign(w_det) * (w_abs > 0.7 * scale).float() * scale
 
         W = w + (step_fraction * (w_quant - w)).detach()
 
@@ -504,13 +504,14 @@ class Block(nn.Module):
         self.attn_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.mlp_scale = nn.Parameter(torch.ones(dim, dtype=torch.float32))
         self.resid_mix = nn.Parameter(torch.stack((torch.ones(dim), torch.zeros(dim))).float())
-        self.ln_scale_factor = 1.0 / math.sqrt(layer_idx + 1)
+        self.register_buffer("ln_scale_factor_t", torch.tensor(1.0 / math.sqrt(layer_idx + 1)))
 
     def forward(self, x: Tensor, x0: Tensor, step_fraction: Tensor) -> Tensor:
         mix = self.resid_mix.to(dtype=x.dtype)
         x = mix[0][None, None, :] * x + mix[1][None, None, :] * x0
-        x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * self.attn(self.attn_norm(x) * self.ln_scale_factor, step_fraction)
-        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x) * self.ln_scale_factor, step_fraction)
+        sf = self.ln_scale_factor_t.to(dtype=x.dtype)
+        x = x + self.attn_scale.to(dtype=x.dtype)[None, None, :] * self.attn(self.attn_norm(x) * sf, step_fraction)
+        x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x) * sf, step_fraction)
         return x
 
 class GPT(nn.Module):
@@ -570,7 +571,7 @@ class GPT(nn.Module):
         if self.bigram is not None:
             x = x + self.bigram(input_ids)
         x = self.smear_gate(x)
-        x0 = x
+        x0 = x.clone()
 
         skips = []
         for i in range(self.num_encoder_layers):
@@ -624,19 +625,17 @@ def measure_quantization_health(model: nn.Module) -> tuple[float, float]:
 # -----------------------------
 
 def main() -> None:
-    absolute_t0 = time.perf_counter()
-
     global zeropower_via_newtonschulz5
     args = Hyperparameters()
-    zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
+    # zeropower_via_newtonschulz5 = torch.compile(zeropower_via_newtonschulz5)
 
     distributed = "RANK" in os.environ and "WORLD_SIZE" in os.environ
     rank = int(os.environ.get("RANK", "0"))
     world_size = int(os.environ.get("WORLD_SIZE", "1"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
 
-    if 16 % world_size != 0: raise ValueError(f"WORLD_SIZE={world_size} must divide 16")
-    grad_accum_steps = 16 // world_size
+    if 8 % world_size != 0: raise ValueError(f"WORLD_SIZE={world_size} must divide 8")
+    grad_accum_steps = 8 // world_size
     device = torch.device("cuda", local_rank)
     torch.cuda.set_device(device)
     if distributed: dist.init_process_group(backend="nccl", device_id=device)
@@ -707,13 +706,15 @@ def main() -> None:
         mid_frac = middle_counts.get(bi, 0) / total_counts.get(bi, 1)
         clip_multipliers[bi] = 1.0 - 0.4 * mid_frac
 
-    # --- SELF-CALIBRATION ---
-    t_compile_start = time.perf_counter()
-
+    # --- COMPILER WARMUP (not counted against training budget) ---
+    avg_step_ms = 600.0
     if args.warmup_steps > 0:
+        initial_model_state = {n: t.detach().cpu().clone() for n, t in base_model.state_dict().items()}
+        initial_optimizer_states = [copy.deepcopy(opt.state_dict()) for opt in optimizers]
         model.train()
         sf_zero = torch.tensor([0.0], device=device, dtype=torch.float32)
 
+        t_compile_start = time.perf_counter()
         for opt in optimizers: opt.zero_grad(set_to_none=True)
         for micro_step in range(grad_accum_steps):
             if distributed: model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
@@ -735,42 +736,56 @@ def main() -> None:
                     (model(x, y, step_fraction=sf_zero) * (1.0 / grad_accum_steps)).backward()
             for opt in optimizers: opt.step()
         torch.cuda.synchronize()
-        train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
+        warmup_time_ms = 1000.0 * (time.perf_counter() - t_warmup_start)
+        avg_step_ms = warmup_time_ms / max(1, args.warmup_steps)
+        log0(f"Warmup ({args.warmup_steps} steps): {warmup_time_ms:.0f}ms, avg {avg_step_ms:.0f}ms/step")
 
-    warmup_time_ms = 1000.0 * (time.perf_counter() - t_warmup_start)
-    avg_step_ms = warmup_time_ms / max(1, args.warmup_steps)
-    time_elapsed_ms = 1000.0 * (time.perf_counter() - absolute_t0)
+        base_model.load_state_dict(initial_model_state, strict=True)
+        for opt, state in zip(optimizers, initial_optimizer_states):
+            opt.load_state_dict(state)
+        for opt in optimizers: opt.zero_grad(set_to_none=True)
+        train_loader = DistributedTokenLoader(args.train_files, rank, world_size, device)
+        del initial_model_state, initial_optimizer_states
 
     if distributed:
-        sync_metrics = torch.tensor([time_elapsed_ms, avg_step_ms], dtype=torch.float32, device=device)
+        sync_metrics = torch.tensor([avg_step_ms], dtype=torch.float32, device=device)
         dist.broadcast(sync_metrics, src=0)
-        time_elapsed_ms, avg_step_ms = sync_metrics.tolist()
+        avg_step_ms = sync_metrics.item()
 
     safety_buffer_ms = (avg_step_ms * 2.5) + 5000.0
-    time_left_ms = (args.max_wallclock_seconds * 1000.0) - time_elapsed_ms - safety_buffer_ms
-    projected_main_steps = max(1, int(time_left_ms / avg_step_ms))
+    projected_main_steps = max(1, int((max_wallclock_ms - safety_buffer_ms) / avg_step_ms))
 
     args.muon_momentum_warmup_steps = max(2, int(projected_main_steps * 0.10))
     args.val_loss_every = 0
     args.train_log_every = max(1, projected_main_steps // 20)
 
+    gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A"
     log0("\n" + "=" * 50)
     log0("HARDWARE AUTO-CALIBRATION COMPLETE")
+    log0(f"   - GPU:               {gpu_name} x{world_size}")
     log0(f"   - Hardware Speed:    {avg_step_ms:.0f} ms/step")
     log0(f"   - Projected Steps:   {projected_main_steps} steps remaining")
     log0(f"   - Muon Warmup Phase: {args.muon_momentum_warmup_steps} steps")
     log0(f"   - Validation:        End-of-training only")
     log0(f"   - Sniffer Log Freq:  Every {args.train_log_every} steps")
     log0(f"   - I/O Safety Buffer: {safety_buffer_ms / 1000.0:.1f} seconds")
+    log0(f"   - Model:             {args.model_dim}d / {args.num_layers}L / {args.num_unique_blocks}UB / MLP{args.mlp_mult}x")
+    log0(f"   - NS Steps:          {args.muon_backend_steps}")
+    log0(f"   - BigramHash:        {args.bigram_vocab_size} buckets, dim={args.bigram_dim}")
+    log0(f"   - LR Schedule:       loss-stepped (1.0@>3.0, 0.5@>2.5, 0.3, cosine->0.01)")
+    log0(f"   - Step Fraction:     phi-exponent (t^1.618)")
+    log0(f"   - matrix_lr:         {args.matrix_lr}")
     log0("=" * 50 + "\n")
 
-    loop_max_ms = time_left_ms
+    loop_max_ms = max_wallclock_ms - safety_buffer_ms
     training_time_ms = 0.0
     t0 = time.perf_counter()
 
     step = 0
     stop_after_step = None
     loss_ema = None
+    lr_phase = 0
+    cosine_start_ms = None
 
     while True:
         last_step = step == args.iterations or (stop_after_step is not None and step >= stop_after_step)
@@ -787,14 +802,12 @@ def main() -> None:
 
         if last_step: break
 
-        # --- QUARTER-CIRCLE LR SCHEDULE ---
+        # --- LOSS-TRIGGERED STEPWISE LR SCHEDULE ---
         loop_elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
         fraction = min(loop_elapsed_ms / max(loop_max_ms, 1.0), 1.0)
-        scale = math.sqrt(1.0 - fraction * fraction)
-
-        step_frac_val = fraction
+        _phi = (1.0 + math.sqrt(5.0)) / 2.0
+        step_frac_val = fraction ** _phi
         sf_t = torch.tensor([step_frac_val], device=device, dtype=torch.float32)
-        # ---
 
         for opt in optimizers: opt.zero_grad(set_to_none=True)
         train_loss = torch.zeros((), device=device)
@@ -807,22 +820,37 @@ def main() -> None:
             (loss * (1.0 / grad_accum_steps)).backward()
         train_loss /= grad_accum_steps
 
-        surprise_boost = 1.0
         tl_val = train_loss.item()
         if loss_ema is None:
             loss_ema = tl_val
         else:
-            if tl_val > 1.3 * loss_ema:
-                surprise_boost = 1.5
-                if args.train_log_every > 0 and master_process:
-                    log0(f"  SURPRISE at step {step}: loss={tl_val:.4f} vs ema={loss_ema:.4f}, boosting LR x1.5")
             loss_ema = 0.95 * loss_ema + 0.05 * tl_val
+
+        min_lr_scale = 0.01
+        if lr_phase == 0 and loss_ema < 3.0:
+            lr_phase = 1
+            if master_process: log0(f"  LR phase 1->2: loss_ema={loss_ema:.4f} < 3.0, scale 1.0->0.5 at step {step}")
+        if lr_phase == 1 and loss_ema < 2.5:
+            lr_phase = 2
+            cosine_start_ms = loop_elapsed_ms + 0.70 * (loop_max_ms - loop_elapsed_ms)
+            if master_process: log0(f"  LR phase 2->3: loss_ema={loss_ema:.4f} < 2.5, scale 0.5->0.3 at step {step}")
+
+        if lr_phase == 0:
+            scale = 1.0
+        elif lr_phase == 1:
+            scale = 0.5
+        elif lr_phase == 2 and (cosine_start_ms is None or loop_elapsed_ms < cosine_start_ms):
+            scale = 0.3
+        else:
+            cosine_progress = (loop_elapsed_ms - cosine_start_ms) / max(loop_max_ms - cosine_start_ms, 1.0)
+            cosine_progress = min(cosine_progress, 1.0)
+            scale = min_lr_scale + (0.3 - min_lr_scale) * 0.5 * (1.0 + math.cos(math.pi * cosine_progress))
+        # ---
 
         frac_muon = min(step / args.muon_momentum_warmup_steps, 1.0) if args.muon_momentum_warmup_steps > 0 else 1.0
         for group in optimizers[1].param_groups: group["momentum"] = (1 - frac_muon) * args.muon_momentum_warmup_start + frac_muon * args.muon_momentum
-        effective_scale = scale * surprise_boost
         for opt in optimizers:
-            for group in opt.param_groups: group["lr"] = group["base_lr"] * effective_scale
+            for group in opt.param_groups: group["lr"] = group["base_lr"] * scale
 
         if args.grad_clip_norm > 0:
             torch.nn.utils.clip_grad_norm_(base_model.parameters(), args.grad_clip_norm)
@@ -840,16 +868,16 @@ def main() -> None:
 
         step += 1
 
-        # --- KILL SWITCH ---
-        total_absolute_ms = 1000.0 * (time.perf_counter() - absolute_t0)
-        reached_cap = max_wallclock_ms is not None and total_absolute_ms >= (max_wallclock_ms - safety_buffer_ms)
+        # --- KILL SWITCH (based on training time only, excludes compile warmup) ---
+        train_elapsed_ms = training_time_ms + 1000.0 * (time.perf_counter() - t0)
+        reached_cap = max_wallclock_ms is not None and train_elapsed_ms >= (max_wallclock_ms - safety_buffer_ms)
         if distributed and max_wallclock_ms is not None:
             cap_tensor = torch.tensor([1 if reached_cap else 0], dtype=torch.int32, device=device)
             dist.all_reduce(cap_tensor, op=dist.ReduceOp.MAX)
             reached_cap = cap_tensor.item() > 0
 
         if stop_after_step is None and reached_cap:
-            log0(f"stopping_early: cap reached at step {step} (Absolute time: {total_absolute_ms / 1000.0:.1f}s)")
+            log0(f"stopping_early: cap reached at step {step} (Train time: {train_elapsed_ms / 1000.0:.1f}s)")
             stop_after_step = step
 
         if args.train_log_every > 0 and (step <= 10 or step % args.train_log_every == 0):

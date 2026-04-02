@@ -1,0 +1,39 @@
+
+==================================================
+🚀 HARDWARE AUTO-CALIBRATION COMPLETE
+   - Hardware Speed:    1691 ms/step
+   - Projected Steps:   296 steps remaining
+   - Muon Warmup Phase: 29 steps
+   - Validation Freq:   Every 98 steps
+   - Sniffer Log Freq:  Every 14 steps
+   - I/O Safety Buffer: 9.2 seconds
+==================================================
+
+step:1 train_loss:6.5672 step_avg:0ms [Zero: 19.7% | Edges: 10.2%]
+step:2 train_loss:6.4364 step_avg:886ms [Zero: 19.7% | Edges: 10.2%]
+step:3 train_loss:6.3937 step_avg:1146ms [Zero: 19.7% | Edges: 10.2%]
+step:4 train_loss:6.5052 step_avg:1276ms [Zero: 19.7% | Edges: 10.2%]
+step:5 train_loss:6.3776 step_avg:1355ms [Zero: 19.7% | Edges: 10.2%]
+step:6 train_loss:6.3382 step_avg:1407ms [Zero: 19.7% | Edges: 10.2%]
+step:7 train_loss:6.3567 step_avg:1444ms [Zero: 19.7% | Edges: 10.2%]
+step:8 train_loss:6.5167 step_avg:1472ms [Zero: 19.7% | Edges: 10.2%]
+step:9 train_loss:6.3797 step_avg:1494ms [Zero: 19.7% | Edges: 10.2%]
+step:10 train_loss:6.4850 step_avg:1511ms [Zero: 19.7% | Edges: 10.2%]
+step:14 train_loss:6.4354 step_avg:1555ms [Zero: 19.7% | Edges: 10.2%]
+step:28 train_loss:5.8461 step_avg:1610ms [Zero: 19.6% | Edges: 10.3%]
+step:42 train_loss:5.2392 step_avg:1631ms [Zero: 19.6% | Edges: 10.4%]
+step:56 train_loss:4.8797 step_avg:1642ms [Zero: 19.5% | Edges: 10.4%]
+step:70 train_loss:4.5048 step_avg:1650ms [Zero: 19.4% | Edges: 10.5%]
+step:84 train_loss:4.3386 step_avg:1654ms [Zero: 19.4% | Edges: 10.6%]
+step:98 train_loss:4.1559 step_avg:1658ms [Zero: 19.3% | Edges: 10.6%]
+step:98 val_loss:4.3882 val_bpb:2.5990
+step:112 train_loss:3.9367 step_avg:1665ms [Zero: 19.2% | Edges: 10.7%]
+step:126 train_loss:3.7854 step_avg:1669ms [Zero: 19.1% | Edges: 10.8%]
+step:140 train_loss:3.6737 step_avg:1670ms [Zero: 19.0% | Edges: 10.9%]
+step:154 train_loss:3.5554 step_avg:1671ms [Zero: 19.0% | Edges: 10.9%]
+step:168 train_loss:3.5142 step_avg:1671ms [Zero: 18.9% | Edges: 11.0%]
+step:182 train_loss:3.3998 step_avg:1672ms [Zero: 18.9% | Edges: 11.0%]
+stopping_early: cap reached at step 194 (Absolute time: 590.8s)
+step:194 val_loss:3.6013 val_bpb:2.1329
+Serialized model packed+zlib: 16395264 bytes
+final_int8_zlib_roundtrip val_loss:3.6013 val_bpb:2.1329 eval_time:123936ms

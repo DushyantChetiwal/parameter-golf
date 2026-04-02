@@ -1,0 +1,23 @@
+Compilation (primer step): 34211ms
+
+==================================================
+HARDWARE AUTO-CALIBRATION COMPLETE
+   - GPU:               NVIDIA A100-SXM4-40GB x2
+   - Hardware Speed:    1031 ms/step
+   - Projected Steps:   1 steps remaining
+   - Muon Warmup Phase: 2 steps
+   - Validation:        End-of-training only
+   - Sniffer Log Freq:  Every 1 steps
+   - I/O Safety Buffer: 7.6 seconds
+   - Model:             768d / 10L / 10UB / MLP4x
+   - NS Steps:          5
+   - BigramHash:        0 buckets, dim=128
+   - LR Schedule:       hold-cosine (hold=0.70, min_lr=0.01)
+   - matrix_lr:         0.8
+==================================================
+
+stopping_early: cap reached at step 1 (Absolute time: 46.1s)
+step:1 train_loss:6.2201 step_avg:0ms frac:0.00 lr_scale:1.000 [Zero: 36.0% | Edges: 64.0%]
+step:1 val_loss:6.1352 val_bpb:3.6336
+Serialized model zstd-22: 13640002 bytes
+final_roundtrip val_loss:6.1368 val_bpb:3.6346 eval_time:32354ms

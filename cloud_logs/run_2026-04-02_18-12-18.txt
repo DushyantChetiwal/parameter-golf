@@ -1,0 +1,38 @@
+Compilation (primer step): 20913ms
+
+==================================================
+HARDWARE AUTO-CALIBRATION COMPLETE
+   - GPU:               NVIDIA A100-SXM4-40GB x2
+   - Hardware Speed:    536 ms/step
+   - Projected Steps:   16 steps remaining
+   - Muon Warmup Phase: 2 steps
+   - Validation:        End-of-training only
+   - Sniffer Log Freq:  Every 1 steps
+   - I/O Safety Buffer: 6.3 seconds
+   - Model:             768d / 10L / 10UB / MLP4x
+   - NS Steps:          5
+   - BigramHash:        0 buckets, dim=128
+   - LR Schedule:       hold-cosine (hold=0.70, min_lr=0.01)
+   - matrix_lr:         0.8
+==================================================
+
+step:1 train_loss:6.2480 step_avg:0ms frac:0.00 lr_scale:1.000 [Zero: 36.0% | Edges: 64.0%]
+step:2 train_loss:5.9158 step_avg:321ms frac:0.07 lr_scale:1.000 [Zero: 36.3% | Edges: 63.7%]
+step:3 train_loss:5.8194 step_avg:443ms frac:0.15 lr_scale:1.000 [Zero: 36.7% | Edges: 63.3%]
+step:4 train_loss:5.7460 step_avg:470ms frac:0.22 lr_scale:1.000 [Zero: 37.0% | Edges: 63.0%]
+step:5 train_loss:5.7045 step_avg:486ms frac:0.28 lr_scale:1.000 [Zero: 37.3% | Edges: 62.7%]
+step:6 train_loss:5.6308 step_avg:497ms frac:0.34 lr_scale:1.000 [Zero: 37.7% | Edges: 62.3%]
+step:7 train_loss:5.6037 step_avg:505ms frac:0.40 lr_scale:1.000 [Zero: 38.0% | Edges: 62.0%]
+step:8 train_loss:5.4633 step_avg:511ms frac:0.47 lr_scale:1.000 [Zero: 38.3% | Edges: 61.7%]
+step:9 train_loss:5.4437 step_avg:515ms frac:0.53 lr_scale:1.000 [Zero: 38.6% | Edges: 61.4%]
+step:10 train_loss:5.4227 step_avg:519ms frac:0.59 lr_scale:1.000 [Zero: 38.8% | Edges: 61.2%]
+step:11 train_loss:5.2498 step_avg:522ms frac:0.66 lr_scale:1.000 [Zero: 39.1% | Edges: 60.9%]
+step:12 train_loss:5.0692 step_avg:524ms frac:0.72 lr_scale:0.990 [Zero: 39.3% | Edges: 60.7%]
+step:13 train_loss:5.1268 step_avg:526ms frac:0.78 lr_scale:0.827 [Zero: 39.5% | Edges: 60.5%]
+step:14 train_loss:5.0908 step_avg:528ms frac:0.85 lr_scale:0.528 [Zero: 39.7% | Edges: 60.3%]
+step:15 train_loss:4.9935 step_avg:530ms frac:0.91 lr_scale:0.220 [Zero: 39.7% | Edges: 60.3%]
+stopping_early: cap reached at step 16 (Absolute time: 39.0s)
+step:16 train_loss:5.0005 step_avg:531ms frac:0.97 lr_scale:0.032 [Zero: 39.7% | Edges: 60.3%]
+step:16 val_loss:5.0348 val_bpb:2.9819
+Serialized model zstd-22: 13510103 bytes
+final_roundtrip val_loss:5.0144 val_bpb:2.9698 eval_time:32389ms

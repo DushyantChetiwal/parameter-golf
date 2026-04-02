@@ -1,0 +1,53 @@
+Compilation (primer step): 91368ms
+Warmup (5 steps): 2456ms, avg 491ms/step
+
+==================================================
+HARDWARE AUTO-CALIBRATION COMPLETE
+   - GPU:               NVIDIA A100-SXM4-40GB x2
+   - Hardware Speed:    491 ms/step
+   - Projected Steps:   1208 steps remaining
+   - Muon Warmup Phase: 120 steps
+   - Validation:        End-of-training only
+   - Sniffer Log Freq:  Every 60 steps
+   - I/O Safety Buffer: 6.2 seconds
+   - Model:             768d / 10L / 10UB / MLP5x
+   - NS Steps:          5
+   - BigramHash:        0 buckets, dim=128
+   - LR Schedule:       Hold-Cosine (hold=0.70, min_lr=0.01)
+   - Step Fraction:     phi-exponent (t^1.618)
+   - matrix_lr:         0.8
+==================================================
+
+step:1 train_loss:6.9378 step_avg:0ms frac:0.00 lr_scale:1.000 [Zero: 35.0% | Edges: 65.0%]
+step:2 train_loss:12.2997 step_avg:278ms frac:0.00 lr_scale:1.000 [Zero: 35.1% | Edges: 64.9%]
+step:3 train_loss:9.3940 step_avg:354ms frac:0.00 lr_scale:1.000 [Zero: 35.2% | Edges: 64.8%]
+step:4 train_loss:7.3476 step_avg:393ms frac:0.00 lr_scale:1.000 [Zero: 35.3% | Edges: 64.7%]
+step:5 train_loss:6.4563 step_avg:416ms frac:0.00 lr_scale:1.000 [Zero: 35.4% | Edges: 64.6%]
+step:6 train_loss:6.0048 step_avg:431ms frac:0.00 lr_scale:1.000 [Zero: 35.7% | Edges: 64.3%]
+step:7 train_loss:5.8591 step_avg:442ms frac:0.01 lr_scale:1.000 [Zero: 35.9% | Edges: 64.1%]
+step:8 train_loss:5.6615 step_avg:450ms frac:0.01 lr_scale:1.000 [Zero: 36.1% | Edges: 63.9%]
+step:9 train_loss:5.4383 step_avg:457ms frac:0.01 lr_scale:1.000 [Zero: 36.4% | Edges: 63.6%]
+step:10 train_loss:5.2686 step_avg:462ms frac:0.01 lr_scale:1.000 [Zero: 36.6% | Edges: 63.4%]
+step:60 train_loss:3.4424 step_avg:492ms frac:0.05 lr_scale:1.000 [Zero: 41.7% | Edges: 58.3%]
+step:120 train_loss:3.1209 step_avg:495ms frac:0.10 lr_scale:1.000 [Zero: 43.6% | Edges: 56.4%]
+step:180 train_loss:2.6735 step_avg:496ms frac:0.15 lr_scale:1.000 [Zero: 44.5% | Edges: 55.5%]
+step:240 train_loss:2.6773 step_avg:497ms frac:0.20 lr_scale:1.000 [Zero: 45.1% | Edges: 54.9%]
+step:300 train_loss:2.5649 step_avg:498ms frac:0.25 lr_scale:1.000 [Zero: 45.4% | Edges: 54.6%]
+step:360 train_loss:2.5802 step_avg:498ms frac:0.30 lr_scale:1.000 [Zero: 45.7% | Edges: 54.3%]
+step:420 train_loss:2.4385 step_avg:498ms frac:0.35 lr_scale:1.000 [Zero: 45.8% | Edges: 54.2%]
+step:480 train_loss:2.4713 step_avg:498ms frac:0.40 lr_scale:1.000 [Zero: 46.0% | Edges: 54.0%]
+step:540 train_loss:2.3761 step_avg:498ms frac:0.45 lr_scale:1.000 [Zero: 46.1% | Edges: 53.9%]
+step:600 train_loss:2.3484 step_avg:499ms frac:0.50 lr_scale:1.000 [Zero: 46.2% | Edges: 53.8%]
+step:660 train_loss:2.4745 step_avg:499ms frac:0.55 lr_scale:1.000 [Zero: 46.3% | Edges: 53.7%]
+step:720 train_loss:2.3592 step_avg:499ms frac:0.61 lr_scale:1.000 [Zero: 46.3% | Edges: 53.7%]
+step:780 train_loss:2.3562 step_avg:499ms frac:0.66 lr_scale:1.000 [Zero: 46.4% | Edges: 53.6%]
+step:840 train_loss:2.2729 step_avg:499ms frac:0.71 lr_scale:0.999 [Zero: 46.5% | Edges: 53.5%]
+step:900 train_loss:2.3085 step_avg:499ms frac:0.76 lr_scale:0.916 [Zero: 46.6% | Edges: 53.4%]
+step:960 train_loss:2.2836 step_avg:499ms frac:0.81 lr_scale:0.720 [Zero: 46.7% | Edges: 53.3%]
+step:1020 train_loss:2.1481 step_avg:499ms frac:0.86 lr_scale:0.466 [Zero: 46.8% | Edges: 53.2%]
+step:1080 train_loss:2.1330 step_avg:499ms frac:0.91 lr_scale:0.222 [Zero: 46.9% | Edges: 53.1%]
+step:1140 train_loss:2.3139 step_avg:499ms frac:0.96 lr_scale:0.055 [Zero: 46.9% | Edges: 53.1%]
+stopping_early: cap reached at step 1189 (Train time: 594.3s)
+step:1189 val_loss:2.2928 val_bpb:1.3579
+Serialized model zstd-22: 15404887 bytes
+final_roundtrip val_loss:2.3022 val_bpb:1.3635 eval_time:80408ms

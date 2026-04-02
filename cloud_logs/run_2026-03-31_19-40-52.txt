@@ -1,0 +1,36 @@
+
+==================================================
+🚀 HARDWARE AUTO-CALIBRATION COMPLETE
+   - Hardware Speed:    1729 ms/step
+   - Projected Steps:   260 steps remaining
+   - Muon Warmup Phase: 26 steps
+   - Validation Freq:   Every 86 steps
+   - Sniffer Log Freq:  Every 13 steps
+   - I/O Safety Buffer: 9.3 seconds
+==================================================
+
+step:1 train_loss:6.5200 step_avg:0ms [Zero: 19.7% | Edges: 10.2%]
+step:2 train_loss:6.3407 step_avg:922ms [Zero: 19.7% | Edges: 10.2%]
+step:3 train_loss:6.3304 step_avg:1189ms [Zero: 19.7% | Edges: 10.2%]
+step:4 train_loss:6.3683 step_avg:1323ms [Zero: 19.7% | Edges: 10.2%]
+step:5 train_loss:6.3385 step_avg:1403ms [Zero: 19.7% | Edges: 10.2%]
+step:6 train_loss:6.4217 step_avg:1457ms [Zero: 19.7% | Edges: 10.2%]
+step:7 train_loss:6.3202 step_avg:1495ms [Zero: 19.7% | Edges: 10.2%]
+step:8 train_loss:6.3147 step_avg:1524ms [Zero: 19.7% | Edges: 10.2%]
+step:9 train_loss:6.4280 step_avg:1546ms [Zero: 19.7% | Edges: 10.2%]
+step:10 train_loss:6.2696 step_avg:1564ms [Zero: 19.7% | Edges: 10.2%]
+step:13 train_loss:6.3786 step_avg:1598ms [Zero: 19.7% | Edges: 10.2%]
+step:26 train_loss:5.9076 step_avg:1653ms [Zero: 19.6% | Edges: 10.3%]
+step:39 train_loss:5.1281 step_avg:1673ms [Zero: 19.6% | Edges: 10.4%]
+step:52 train_loss:4.7670 step_avg:1684ms [Zero: 19.5% | Edges: 10.4%]
+step:65 train_loss:4.4668 step_avg:1690ms [Zero: 19.5% | Edges: 10.5%]
+step:78 train_loss:4.2501 step_avg:1694ms [Zero: 19.4% | Edges: 10.6%]
+step:86 val_loss:4.4323 val_bpb:2.6250
+step:91 train_loss:4.2414 step_avg:1697ms [Zero: 19.3% | Edges: 10.6%]
+step:104 train_loss:3.8989 step_avg:1699ms [Zero: 19.3% | Edges: 10.7%]
+step:117 train_loss:3.6400 step_avg:1701ms [Zero: 19.2% | Edges: 10.7%]
+step:130 train_loss:3.5688 step_avg:1703ms [Zero: 19.1% | Edges: 10.8%]
+stopping_early: cap reached at step 139 (Absolute time: 592.0s)
+step:139 val_loss:3.8276 val_bpb:2.2669
+Serialized model packed+zlib: 57834698 bytes
+final_int8_zlib_roundtrip val_loss:3.8276 val_bpb:2.2669 eval_time:123844ms

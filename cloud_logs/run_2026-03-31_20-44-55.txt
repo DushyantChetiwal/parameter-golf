@@ -1,0 +1,37 @@
+
+==================================================
+🚀 HARDWARE AUTO-CALIBRATION COMPLETE
+   - Hardware Speed:    1704 ms/step
+   - Projected Steps:   268 steps remaining
+   - Muon Warmup Phase: 26 steps
+   - Validation Freq:   Every 89 steps
+   - Sniffer Log Freq:  Every 13 steps
+   - I/O Safety Buffer: 9.3 seconds
+==================================================
+
+step:1 train_loss:8.7064 step_avg:0ms [Zero: 100.0% | Edges: 0.0%]
+step:2 train_loss:7.0676 step_avg:905ms [Zero: 100.0% | Edges: 0.0%]
+step:3 train_loss:6.7192 step_avg:1159ms [Zero: 100.0% | Edges: 0.0%]
+step:4 train_loss:6.4917 step_avg:1286ms [Zero: 99.9% | Edges: 0.0%]
+step:5 train_loss:6.6531 step_avg:1363ms [Zero: 99.9% | Edges: 0.0%]
+step:6 train_loss:6.5463 step_avg:1414ms [Zero: 99.8% | Edges: 0.0%]
+step:7 train_loss:6.5874 step_avg:1450ms [Zero: 99.8% | Edges: 0.0%]
+step:8 train_loss:6.6298 step_avg:1478ms [Zero: 99.7% | Edges: 0.0%]
+step:9 train_loss:6.6332 step_avg:1500ms [Zero: 99.6% | Edges: 0.0%]
+step:10 train_loss:6.5975 step_avg:1517ms [Zero: 99.4% | Edges: 0.0%]
+step:13 train_loss:6.5592 step_avg:1551ms [Zero: 98.9% | Edges: 0.0%]
+step:26 train_loss:6.3911 step_avg:1607ms [Zero: 94.8% | Edges: 0.0%]
+step:39 train_loss:6.1436 step_avg:1627ms [Zero: 89.5% | Edges: 0.0%]
+step:52 train_loss:5.8978 step_avg:1639ms [Zero: 84.7% | Edges: 0.1%]
+step:65 train_loss:5.4873 step_avg:1646ms [Zero: 81.3% | Edges: 0.2%]
+step:78 train_loss:5.2163 step_avg:1652ms [Zero: 79.5% | Edges: 0.2%]
+step:89 val_loss:6.7140 val_bpb:3.9764
+step:91 train_loss:5.0283 step_avg:1655ms [Zero: 78.6% | Edges: 0.3%]
+step:104 train_loss:4.7880 step_avg:1658ms [Zero: 78.1% | Edges: 0.3%]
+step:117 train_loss:4.6157 step_avg:1668ms [Zero: 77.9% | Edges: 0.3%]
+step:130 train_loss:4.4850 step_avg:1669ms [Zero: 77.7% | Edges: 0.3%]
+step:143 train_loss:4.5213 step_avg:1670ms [Zero: 77.5% | Edges: 0.4%]
+stopping_early: cap reached at step 146 (Absolute time: 591.7s)
+step:146 val_loss:6.1816 val_bpb:3.6611
+Serialized model packed+zlib: 4308444 bytes
+final_int8_zlib_roundtrip val_loss:6.1813 val_bpb:3.6609 eval_time:123650ms

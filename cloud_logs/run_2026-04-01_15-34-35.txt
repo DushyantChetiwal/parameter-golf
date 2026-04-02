@@ -1,0 +1,46 @@
+
+==================================================
+HARDWARE AUTO-CALIBRATION COMPLETE
+   - Hardware Speed:    1683 ms/step
+   - Projected Steps:   274 steps remaining
+   - Muon Warmup Phase: 27 steps
+   - Validation:        End-of-training only
+   - Sniffer Log Freq:  Every 13 steps
+   - I/O Safety Buffer: 9.2 seconds
+==================================================
+
+step:1 train_loss:6.6228 step_avg:0ms frac:0.00 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:2 train_loss:6.6124 step_avg:904ms frac:0.00 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:3 train_loss:6.6090 step_avg:1164ms frac:0.01 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:4 train_loss:6.6084 step_avg:1294ms frac:0.01 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:5 train_loss:6.5976 step_avg:1372ms frac:0.01 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:6 train_loss:6.5543 step_avg:1425ms frac:0.02 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:7 train_loss:6.5796 step_avg:1462ms frac:0.02 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:8 train_loss:6.5519 step_avg:1491ms frac:0.03 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:9 train_loss:6.5296 step_avg:1513ms frac:0.03 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:10 train_loss:6.5039 step_avg:1530ms frac:0.03 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:13 train_loss:6.3655 step_avg:1567ms frac:0.04 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:26 train_loss:5.6665 step_avg:1632ms frac:0.09 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:39 train_loss:5.1108 step_avg:1656ms frac:0.14 sf:0.00 sp:0.00 [Zero: 35.0% | Edges: 65.0%]
+step:52 train_loss:4.6709 step_avg:1669ms frac:0.19 sf:0.00 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:65 train_loss:4.3586 step_avg:1677ms frac:0.24 sf:0.00 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:78 train_loss:4.0779 step_avg:1683ms frac:0.28 sf:0.00 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:91 train_loss:4.0898 step_avg:1686ms frac:0.33 sf:0.02 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:104 train_loss:3.7529 step_avg:1690ms frac:0.38 sf:0.10 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:117 train_loss:3.5983 step_avg:1692ms frac:0.43 sf:0.23 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:130 train_loss:3.5361 step_avg:1696ms frac:0.48 sf:0.41 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:143 train_loss:3.5474 step_avg:1697ms frac:0.53 sf:0.60 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:156 train_loss:3.4708 step_avg:1699ms frac:0.57 sf:0.77 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:169 train_loss:3.3874 step_avg:1700ms frac:0.62 sf:0.91 sp:0.00 [Zero: 35.1% | Edges: 64.9%]
+step:182 train_loss:3.3793 step_avg:1701ms frac:0.67 sf:0.99 sp:0.00 [Zero: 35.2% | Edges: 64.8%]
+step:195 train_loss:3.3834 step_avg:1702ms frac:0.72 sf:1.00 sp:0.01 [Zero: 35.2% | Edges: 64.8%]
+step:208 train_loss:3.3133 step_avg:1702ms frac:0.77 sf:1.00 sp:0.12 [Zero: 35.2% | Edges: 64.8%]
+step:221 train_loss:3.2750 step_avg:1703ms frac:0.81 sf:1.00 sp:0.32 [Zero: 35.2% | Edges: 64.8%]
+step:234 train_loss:3.2689 step_avg:1703ms frac:0.86 sf:1.00 sp:0.57 [Zero: 35.2% | Edges: 64.8%]
+step:247 train_loss:3.2856 step_avg:1704ms frac:0.91 sf:1.00 sp:0.80 [Zero: 35.2% | Edges: 64.8%]
+step:260 train_loss:3.2389 step_avg:1704ms frac:0.96 sf:1.00 sp:0.95 [Zero: 35.2% | Edges: 64.8%]
+stopping_early: cap reached at step 271 (Absolute time: 592.4s)
+step:271 val_loss:3.2684 val_bpb:1.9357
+Applying EMA weights before serialization
+Serialized model zstd-22: 16072990 bytes
+final_roundtrip val_loss:6.1680 val_bpb:3.6530 eval_time:968256ms
