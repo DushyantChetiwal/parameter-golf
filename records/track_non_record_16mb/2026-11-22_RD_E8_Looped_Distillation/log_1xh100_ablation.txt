@@ -1,0 +1,24 @@
+Model unique params: 53,213,714
+[1_dense_bf16] step 1/1200 ce=9.1641 elapsed=58.0s
+[1_dense_bf16] step 250/1200 ce=4.3681 elapsed=88.9s
+[1_dense_bf16] step 500/1200 ce=3.8225 elapsed=119.8s
+[1_dense_bf16] step 750/1200 ce=3.4367 elapsed=150.7s
+[1_dense_bf16] step 1000/1200 ce=3.3890 elapsed=181.7s
+[1_dense_bf16] step 1200/1200 ce=3.3230 elapsed=206.5s
+=== [1_dense_bf16] dense_bpb=1.527838 (uncompressed ~106 MB) ===
+[2_rd_e8_from_teacher] ZERO-SHOT Shell-E8 @ ~2.10 bpp: val_bpb=1.544286 (teacher=1.527838, gap=+0.016448)
+[2_rd_e8_from_teacher] step 1/600 ce=3.2716 | exact_MB=13.21 (2.10 bpp) lam=0.0200 elapsed=90.3s
+[2_rd_e8_from_teacher] step 250/600 ce=3.2851 | exact_MB=12.66 (2.01 bpp) lam=0.0200 elapsed=307.0s
+[2_rd_e8_from_teacher] step 500/600 ce=3.2323 | exact_MB=12.40 (1.97 bpp) lam=0.0104 elapsed=524.4s
+[2_rd_e8_from_teacher] step 600/600 ce=3.2820 | exact_MB=12.50 (1.99 bpp) lam=0.0089 elapsed=611.2s
+=== [2_rd_e8_from_teacher] reloaded_bpb=1.498615 | TOTAL=21,658,358 B (OVER) | rt_diff=0.00444627 ===
+[3_scalar_rd_scratch] step 1/1200 ce=9.0517 | exact_MB=13.68 (2.17 bpp) lam=0.0200 elapsed=95.6s
+[3_scalar_rd_scratch] step 250/1200 ce=4.3082 | exact_MB=9.56 (1.52 bpp) lam=0.0104 elapsed=130.6s
+[3_scalar_rd_scratch] step 500/1200 ce=3.8211 | exact_MB=13.95 (2.22 bpp) lam=0.0198 elapsed=165.5s
+[3_scalar_rd_scratch] step 750/1200 ce=3.4129 | exact_MB=12.58 (2.00 bpp) lam=0.0504 elapsed=200.3s
+[3_scalar_rd_scratch] step 1000/1200 ce=3.3719 | exact_MB=12.49 (1.99 bpp) lam=0.0364 elapsed=234.8s
+[3_scalar_rd_scratch] step 1200/1200 ce=3.3091 | exact_MB=12.56 (2.00 bpp) lam=0.0364 elapsed=262.3s
+=== [3_scalar_rd_scratch] reloaded_bpb=1.519303 | TOTAL=21,883,574 B (OVER) | rt_diff=0.00000000 ===
+[4_rd_e8_scratch] step 1/1200 ce=9.2530 | exact_MB=12.78 (2.03 bpp) lam=0.0200 elapsed=29.6s
+[4_rd_e8_scratch] step 250/1200 ce=4.3388 | exact_MB=8.53 (1.36 bpp) lam=0.0089 elapsed=229.3s
+[4_rd_e8_scratch] step 500/1200 ce=3.9293 | exact_MB=13.16 (2.09 bpp) lam=0.0105 elapsed=429.7s
