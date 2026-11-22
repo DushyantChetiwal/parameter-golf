@@ -1,0 +1,76 @@
+=== START Sat Nov 21 23:46:33 UTC 2026 ===
+=== STAGE 1: 8xH100 53.2M Looped Muon Teacher (12,000 steps = 6.29B tokens) ===
+[teacher] unique_params=53,213,714 eff_layers=12 world_size=8
+[teacher] step 1/12000 loss=9.1549 tok/s=6,878 elapsed=76.2s
+[teacher] step 400/12000 loss=2.9327 tok/s=1,457,459 elapsed=143.9s
+[teacher] step 800/12000 loss=2.8411 tok/s=1,982,548 elapsed=211.6s
+[teacher] step 1200/12000 loss=2.7838 tok/s=2,255,199 elapsed=279.0s
+[teacher] step 1600/12000 loss=2.7355 tok/s=2,423,601 elapsed=346.1s
+[teacher] step 2000/12000 loss=2.6774 tok/s=2,537,635 elapsed=413.2s
+[teacher val@2000] val_loss=2.597670 val_bpb=1.215086
+/usr/local/lib/python3.12/dist-packages/torch/distributed/distributed_c10d.py:4876: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  warnings.warn(  # warn only once
+[teacher ckpt@2000] saved -> /workspace/rd_e8/teacher_53m.pt
+[teacher] step 2400/12000 loss=2.5573 tok/s=2,599,917 elapsed=484.0s
+[teacher] step 2800/12000 loss=2.6372 tok/s=2,663,991 elapsed=551.1s
+[teacher] step 3200/12000 loss=2.6363 tok/s=2,713,920 elapsed=618.2s
+[teacher] step 3600/12000 loss=2.6055 tok/s=2,754,309 elapsed=685.3s
+[teacher] step 4000/12000 loss=2.5255 tok/s=2,787,398 elapsed=752.4s
+[teacher val@4000] val_loss=2.512640 val_bpb=1.175312
+[teacher ckpt@4000] saved -> /workspace/rd_e8/teacher_53m.pt
+[teacher] step 4400/12000 loss=2.4662 tok/s=2,802,346 elapsed=823.2s
+[teacher] step 4800/12000 loss=2.5482 tok/s=2,826,680 elapsed=890.3s
+[teacher] step 5200/12000 loss=2.5958 tok/s=2,847,734 elapsed=957.4s
+[teacher] step 5600/12000 loss=2.5444 tok/s=2,865,932 elapsed=1024.5s
+[teacher] step 6000/12000 loss=2.5078 tok/s=2,881,857 elapsed=1091.6s
+[teacher val@6000] val_loss=2.449935 val_bpb=1.145981
+[teacher ckpt@6000] saved -> /workspace/rd_e8/teacher_53m.pt
+[teacher] step 6400/12000 loss=2.5943 tok/s=2,886,976 elapsed=1162.3s
+[teacher] step 6800/12000 loss=2.4917 tok/s=2,899,986 elapsed=1229.4s
+[teacher] step 7200/12000 loss=2.4548 tok/s=2,911,709 elapsed=1296.4s
+[teacher] step 7600/12000 loss=2.5043 tok/s=2,922,387 elapsed=1363.5s
+[teacher] step 8000/12000 loss=2.5008 tok/s=2,931,869 elapsed=1430.6s
+[teacher val@8000] val_loss=2.387319 val_bpb=1.116692
+[teacher ckpt@8000] saved -> /workspace/rd_e8/teacher_53m.pt
+[teacher] step 8400/12000 loss=2.4235 tok/s=2,933,546 elapsed=1501.3s
+[teacher] step 8800/12000 loss=2.4615 tok/s=2,941,731 elapsed=1568.4s
+[teacher] step 9200/12000 loss=2.4634 tok/s=2,949,212 elapsed=1635.5s
+[teacher] step 9600/12000 loss=2.3518 tok/s=2,955,971 elapsed=1702.7s
+[teacher] step 10000/12000 loss=2.3330 tok/s=2,962,414 elapsed=1769.8s
+[teacher val@10000] val_loss=2.334708 val_bpb=1.092083
+[teacher ckpt@10000] saved -> /workspace/rd_e8/teacher_53m.pt
+[teacher] step 10400/12000 loss=2.4088 tok/s=2,962,574 elapsed=1840.5s
+[teacher] step 10800/12000 loss=2.3089 tok/s=2,968,210 elapsed=1907.7s
+[teacher] step 11200/12000 loss=2.4718 tok/s=2,973,518 elapsed=1974.8s
+[teacher] step 11600/12000 loss=2.4603 tok/s=2,978,230 elapsed=2042.1s
+[teacher] step 12000/12000 loss=2.4488 tok/s=2,982,316 elapsed=2109.6s
+[teacher FINAL] val_loss=2.328294 val_bpb=1.089083 (tokens=2,000,000 bytes=6,168,528)
+=== STAGE 2: Zero-Shot Shell-E8 + 1,500-step RD-E8 KD (786M tokens, target 13.5MB linear) ===
+[RD-E8 init] target_bpp=2.15 done in 0.8s | exact_MB=13.50
+/usr/local/lib/python3.12/dist-packages/torch/distributed/distributed_c10d.py:4876: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  warnings.warn(  # warn only once
+[RD-E8 zero-shot] val_loss=3.254455 val_bpb=1.522304
+[rd_e8_kd] step 1/1500 ce=3.3170 kl=0.9140 exact_MB=13.50 (2.15 bpp) lam=0.0150 tok/s=4,262 elapsed=123.0s
+[rd_e8_kd] step 200/1500 ce=2.4987 kl=0.1256 exact_MB=18.91 (3.00 bpp) lam=0.0334 tok/s=348,319 elapsed=301.0s
+[rd_e8_kd] step 400/1500 ce=2.3833 kl=0.0997 exact_MB=20.46 (3.25 bpp) lam=0.0609 tok/s=436,823 elapsed=480.1s
+[rd_e8_kd val@500] val_loss=2.407058 val_bpb=1.125925
+/usr/local/lib/python3.12/dist-packages/torch/distributed/distributed_c10d.py:4876: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  warnings.warn(  # warn only once
+[rd_e8_kd] step 600/1500 ce=2.4454 kl=0.1090 exact_MB=17.39 (2.76 bpp) lam=0.1017 tok/s=465,243 elapsed=676.1s
+[rd_e8_kd] step 800/1500 ce=2.4838 kl=0.1204 exact_MB=14.83 (2.36 bpp) lam=0.1624 tok/s=490,590 elapsed=855.0s
+[rd_e8_kd] step 1000/1500 ce=2.3498 kl=0.1235 exact_MB=12.78 (2.03 bpp) lam=0.1727 tok/s=507,160 elapsed=1033.8s
+[rd_e8_kd val@1000] val_loss=2.431582 val_bpb=1.137396
+[rd_e8_kd] step 1200/1500 ce=2.4602 kl=0.1110 exact_MB=13.11 (2.08 bpp) lam=0.1727 tok/s=511,577 elapsed=1229.8s
+[rd_e8_kd] step 1400/1500 ce=2.4862 kl=0.1016 exact_MB=13.27 (2.11 bpp) lam=0.1468 tok/s=521,094 elapsed=1408.6s
+[rd_e8_kd] step 1500/1500 ce=2.3567 kl=0.1145 exact_MB=13.36 (2.12 bpp) lam=0.1468 tok/s=524,803 elapsed=1498.5s
+[rd_e8_kd FINAL] val_loss=2.418733 val_bpb=1.131386 -> saved /workspace/rd_e8/student_rde8.pt
+=== STAGE 3: Raw RDE8 <=16MB Pack + 8xH100 Full 47.85M-tok Eval (Chunk + Sliding + TTT) ===
+[pack iter=0] linear=13,773,045 B | embed=1,948,453 B | model=15,753,857 B | code=74,677 B | TOTAL=15,828,534 B (OK <=16MB)
+[roundtrip] max_abs_logit_diff = 0.03446972
+/usr/local/lib/python3.12/dist-packages/torch/distributed/distributed_c10d.py:4876: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  warnings.warn(  # warn only once
+[rank0]:[W1122 00:48:38.786499492 ProcessGroupNCCL.cpp:5072] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+[FULL VAL chunk stride=2048] val_loss=2.460250 val_bpb=1.124235 (tokens=47,853,343 bytes=151,080,645 in 50.6s)
+[FULL VAL sliding stride=256] val_loss=2.422970 val_bpb=1.107200 (tokens=47,853,343 bytes=151,080,645 in 50.0s)
+[FULL VAL score-first TTT] val_loss=2.405078 val_bpb=1.099024 (tokens=47,853,343 bytes=151,080,645 in 543.7s)
+=== ALL DONE Sun Nov 22 00:59:43 UTC 2026 ===

@@ -1,0 +1,23 @@
+{
+  "author": "Dushyant Chetiwal",
+  "github_id": "DushyantChetiwal",
+  "name": "RD-E8 Looped Distillation (Zero-Codebook Spherical Shell-E8 Lattice Codec)",
+  "date": "2026-11-22",
+  "track": "non_record_16mb",
+  "blurb": "53.2M unique / 75.5M effective looped Transformer compressed to 2.19 bpp via a bit-exact zero-codebook Spherical Shell-E8 lattice codec (FWHT + Conway-Sloane E8 + enumerative sphere rank/unrank) and Rate-Distortion KL+CE distillation. Achieves 1.107200 val_bpb (sliding, zero TTT) and 1.099024 val_bpb (score-first LoRA TTT) across all 47,853,343 canonical CaseOps val tokens in 15,828,534 B total (15.83 MB), beating the #1 unlimited-compute 1-bit entry (1.1239) by -0.0249 bpb.",
+  "val_loss": 2.405078,
+  "val_bpb": 1.099024,
+  "sliding_val_bpb": 1.107200,
+  "chunk_val_bpb": 1.124235,
+  "teacher_dense_bf16_val_bpb": 1.089083,
+  "bytes_total": 15828534,
+  "model_bytes": 15753857,
+  "code_bytes_uncompressed": 74677,
+  "val_tokens": 47853343,
+  "eval_time_s": 543.7,
+  "hardware": "8x NVIDIA H100 80GB HBM3 (SXM)",
+  "logs": {
+    "scaled_8xh100": "log_8xh100_scaled.txt",
+    "controlled_1xh100_ablation": "log_1xh100_ablation.txt"
+  }
+}
