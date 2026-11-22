@@ -1,0 +1,184 @@
+W1122 07:29:48.622000 164434 torch/distributed/run.py:803] 
+W1122 07:29:48.622000 164434 torch/distributed/run.py:803] *****************************************
+W1122 07:29:48.622000 164434 torch/distributed/run.py:803] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1122 07:29:48.622000 164434 torch/distributed/run.py:803] *****************************************
+Hyperparameters:
+  adam_eps: 1e-08
+  adam_wd: 0.02
+  agree_add_boost: 0.0
+  artifact_dir: 
+  asym_logit_rescale: True
+  attn_clip_sigmas: 13.0
+  attn_out_gate_enabled: False
+  attn_out_gate_src: proj
+  beta1: 0.9
+  beta2: 0.99
+  caseops_enabled: True
+  compressor: pergroup
+  data_dir: /workspace/pr2135_e8/data
+  datasets_dir: /workspace/pr2135_e8/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved
+  distributed: True
+  e8_attn_ratio: 1.1
+  e8_auto_fit: True
+  e8_delta_scale: 0.355
+  e8_embed_enabled: True
+  e8_embed_ratio: 0.85
+  e8_gamma: 0.5
+  e8_gptq_enabled: True
+  e8_mlp_ratio: 1.0
+  e8_n_buckets: 4
+  e8_target_bytes: 15960000
+  ema_decay: 0.9965
+  embed_bits: 7
+  embed_clip_sigmas: 14.0
+  embed_lr: 0.6
+  embed_wd: 0.085
+  enable_looping_at: 0.35
+  eval_seq_len: 2560
+  eval_stride: 64
+  fused_ce_enabled: True
+  gate_window: 12
+  gated_attn_enabled: False
+  gated_attn_init_std: 0.01
+  gated_attn_quant_gate: False
+  global_ttt_batch_seqs: 32
+  global_ttt_chunk_tokens: 32768
+  global_ttt_epochs: 1
+  global_ttt_grad_clip: 1.0
+  global_ttt_lr: 0.001
+  global_ttt_momentum: 0.9
+  global_ttt_muon_nesterov: True
+  global_ttt_muon_ns_steps: 5
+  global_ttt_optimizer: sgd
+  global_ttt_respect_doc_boundaries: True
+  global_ttt_warmup_chunks: 0
+  global_ttt_warmup_start_lr: 0.0
+  gptq_calibration_batches: 32
+  gptq_reserve_seconds: 0.5
+  grad_accum_steps: 1
+  grad_clip_norm: 0.3
+  is_main_process: True
+  iterations: 20000
+  ln_scale: True
+  load_hessians_path: /workspace/pr2135_e8/hessians_s42.pt
+  load_prequant_ckpt: /workspace/pr2135_e8/final_model.pt
+  local_rank: 0
+  logfile: logs/69cb0882-dc3d-422a-99b8-a8337234930e.txt
+  logit_softcap: 30.0
+  loop_end: 5
+  loop_start: 3
+  lqer_asym_enabled: True
+  lqer_asym_group: 32
+  lqer_enabled: True
+  lqer_factor_bits: 4
+  lqer_rank: 4
+  lqer_top_k: 3
+  matrix_bits: 6
+  matrix_clip_sigmas: 12.85
+  matrix_lr: 0.028
+  max_wallclock_seconds: 600.0
+  min_lr: 0.1
+  mlp_clip_sigmas: 11.5
+  mlp_mult: 4.0
+  model_dim: 512
+  model_path: final_model.pt
+  muon_backend_steps: 5
+  muon_huber_delta: 0.1
+  muon_huber_wd: False
+  muon_momentum: 0.97
+  muon_momentum_warmup_start: 0.92
+  muon_momentum_warmup_steps: 1500
+  muon_row_normalize: True
+  muon_wd: 0.095
+  ngram_hint_precompute_outside: False
+  ngram_tilt_enabled: True
+  num_heads: 8
+  num_kv_heads: 4
+  num_layers: 11
+  num_loops: 2
+  optrot_enabled: False
+  parallel_final_lane: mean
+  parallel_start_layer: 8
+  phased_ttt_num_phases: 1
+  phased_ttt_prefix_docs: 2500
+  qk_gain_init: 5.0
+  qk_gain_schedule: []
+  quantized_model_path: final_model.int6.ptz
+  rank: 0
+  rope_base: 10000.0
+  rope_dims: 16
+  rope_train_seq_len: 2048
+  rope_yarn: False
+  run_id: 69cb0882-dc3d-422a-99b8-a8337234930e
+  save_hessians_path: 
+  scalar_lr: 0.02
+  seed: 42
+  skip_gates_enabled: True
+  skip_ttt: True
+  smear_gate_enabled: True
+  sparse_attn_gate_enabled: True
+  sparse_attn_gate_init_std: 0.0
+  sparse_attn_gate_scale: 0.5
+  tie_embeddings: True
+  tied_embed_init_std: 0.005
+  tied_embed_lr: 0.03
+  token_boost: 2.625
+  token_order: 16
+  token_threshold: 0.8
+  tokenizer_path: /workspace/pr2135_e8/data/tokenizers/fineweb_8192_bpe_lossless_caps_caseops_v1_reserved.model
+  train_batch_tokens: 786432
+  train_files: /workspace/pr2135_e8/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_train_*.bin
+  train_log_every: 500
+  train_seq_len: 2048
+  ttt_batch_size: 64
+  ttt_beta1: 0.0
+  ttt_beta2: 0.99
+  ttt_chunk_size: 48
+  ttt_enabled: True
+  ttt_eval_batches: 
+  ttt_eval_seq_len: 2560
+  ttt_grad_steps: 1
+  ttt_grad_steps_clean: False
+  ttt_k_lora: False
+  ttt_lora_lr: 8e-05
+  ttt_lora_rank: 80
+  ttt_mlp_lora: True
+  ttt_o_lora: True
+  ttt_optimizer: adam
+  ttt_weight_decay: 2.0
+  val_batch_tokens: 524288
+  val_bytes_files: /workspace/pr2135_e8/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_bytes_*.bin
+  val_doc_fraction: 1.0
+  val_files: /workspace/pr2135_e8/data/datasets/fineweb10B_sp8192_caseops/datasets/datasets/fineweb10B_sp8192_lossless_caps_caseops_v1_reserved/fineweb_val_*.bin
+  val_loss_every: 4000
+  vocab_size: 8192
+  warmdown_frac: 0.85
+  warmup_steps: 20
+  within_boost: 0.0
+  within_tau: 99.0
+  word_boost: 0.0
+  word_normalize: strip_punct_lower
+  word_order: 4
+  word_tau: 99.0
+  world_size: 8
+  xsa_last_n: 11
+train_shards: 80
+val_tokens: 47851520
+LOAD_PREQUANT_CKPT=/workspace/pr2135_e8/final_model.pt — skipping 600s training, running quantize+eval on saved EMA weights
+GPTQ:loaded 67 cached Hessians from /workspace/pr2135_e8/hessians_s42.pt
+E8-GPTQ: scale_mult=1.0000 e8_params=35,913,728 e8_bytes=16,070,339 (3.580 bpp)
+E8-GPTQ fit iter=0: quant=16,134,022 B + code=43,410 B = 16,177,432 B (target=15,960,000 B)
+E8-GPTQ: scale_mult=1.0359 e8_params=35,913,728 e8_bytes=15,846,781 (3.530 bpp)
+E8-GPTQ fit iter=1: quant=15,911,027 B + code=43,410 B = 15,954,437 B (target=15,960,000 B)
+Serialized model quantized+e8pk in 51.1s: 15911027 bytes
+Total submission size quantized+e8pk: 15954437 bytes
+diagnostic quantized val_loss:2.33971331 val_bpb:1.06906450 eval_time:13834ms
+[W1122 07:31:12.067239408 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:12.344645136 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:12.419648526 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:12.425969071 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:12.469298025 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:12.517174720 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:13.593303316 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:13.598556876 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
+[W1122 07:31:14.737875068 AllocatorConfig.cpp:28] Warning: PYTORCH_CUDA_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead (function operator())
